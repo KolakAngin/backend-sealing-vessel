@@ -2,18 +2,16 @@ DOKUMENTASI BACKEND APLIKASI SEGEL KAPAL
 Tahap 6 - Pengujian dan Dokumentasi API
 Tanggal verifikasi: 3 September 2026
 
-======================================================================
 1. RINGKASAN
-======================================================================
+
 
 Backend Aplikasi Segel Kapal dibuat dengan Node.js, TypeScript, Express,
 Prisma ORM, dan PostgreSQL. Sistem menyediakan autentikasi JWT, otorisasi
 berdasarkan role, CRUD master data, transaksi laporan sealing, pengelolaan
 seal, verifikasi, tanda tangan, audit log, serta lampiran gambar/dokumen.
 
-======================================================================
 2. TEKNOLOGI DAN STRUKTUR UTAMA
-======================================================================
+
 
 - Runtime        : Node.js
 - Bahasa         : TypeScript (ECMAScript module)
@@ -40,9 +38,8 @@ Direktori penting:
 - tests/                     Integration test
 - uploads/                   File lampiran lokal (tidak masuk Git)
 
-======================================================================
+
 3. KONFIGURASI DAN MENJALANKAN APLIKASI
-======================================================================
 
 Salin dan isi environment berdasarkan .env.example:
 
@@ -81,9 +78,7 @@ Contoh:
 
 curl http://localhost:5001/api/v1/health
 
-======================================================================
 4. FORMAT RESPONS
-======================================================================
 
 Respons berhasil:
 
@@ -116,9 +111,8 @@ Kode HTTP utama:
 - 415 format file tidak didukung
 - 500 kesalahan internal server
 
-======================================================================
+
 5. AUTENTIKASI DAN ROLE
-======================================================================
 
 Role yang tersedia:
 
@@ -152,9 +146,8 @@ Endpoint autentikasi:
 - POST /api/v1/auth/login     Publik
 - GET  /api/v1/auth/me        Semua user terautentikasi
 
-======================================================================
+
 6. DAFTAR ENDPOINT API
-======================================================================
 
 Base URL: http://localhost:5001/api/v1
 
@@ -381,9 +374,8 @@ perlu dipantau saat upgrade pg ke versi mayor berikutnya.
 13. Approve atau reject laporan.
 14. Periksa audit log.
 
-======================================================================
 9. PERINTAH OPERASIONAL
-======================================================================
+
 
 npm run dev                 Menjalankan development server
 npm run typecheck           Memeriksa tipe TypeScript
@@ -394,15 +386,3 @@ npm run prisma:generate     Generate Prisma Client
 npm run prisma:migrate      Membuat/menerapkan migrasi development
 npm run prisma:seed         Menjalankan seed
 npx prisma migrate status   Memeriksa status migrasi
-
-======================================================================
-10. KESIMPULAN
-======================================================================
-
-Backend telah lulus Tahap 6 untuk lingkup fitur yang tersedia saat ini.
-Autentikasi, master data, transaksi sealing, upload gambar/dokumen, audit,
-schema database, typecheck, build, dan integration test telah diverifikasi.
-
-Sebelum deployment produksi, gunakan object storage (misalnya S3/R2), HTTPS,
-secret produksi, backup database, rate limiting, observability/log terpusat,
-serta CI/CD yang menjalankan migrasi dan test secara otomatis.
