@@ -1,6 +1,6 @@
 DOKUMENTASI BACKEND APLIKASI SEGEL KAPAL
 Tahap 6 - Pengujian dan Dokumentasi API
-Tanggal verifikasi: 3 September 2026
+Tanggal verifikasi: 25 Agustus 2026
 
 1. RINGKASAN
 
