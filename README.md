@@ -43,16 +43,16 @@ Direktori penting:
 
 Salin dan isi environment berdasarkan .env.example:
 
-DATABASE_URL="postgresql://USER:PASSWORD@localhost:5432/kapal_db"
-NODE_ENV="development"
-PORT="5001"
-JWT_SECRET="rahasia-acak-minimal-32-karakter"
-JWT_EXPIRES_IN_SECONDS="28800"
-UPLOAD_DIR="uploads"
-MAX_UPLOAD_SIZE_BYTES="10485760"
-SEED_ADMIN_USERNAME="admin"
-SEED_ADMIN_PASSWORD="password-kuat-minimal-8-karakter"
-SEED_ADMIN_EMAIL="admin@example.com"
+DATABASE_URL="postgresql://USER:PASSWORD@localhost:5432/kapal_db" <br>
+NODE_ENV="development" <br>
+PORT="5001" <br>
+JWT_SECRET="rahasia-acak-minimal-32-karakter"<br>
+JWT_EXPIRES_IN_SECONDS="28800"<br>
+UPLOAD_DIR="uploads"<br>
+MAX_UPLOAD_SIZE_BYTES="10485760"<br>
+SEED_ADMIN_USERNAME="admin"<br>
+SEED_ADMIN_PASSWORD="password-kuat-minimal-8-karakter"<br>
+SEED_ADMIN_EMAIL="admin@example.com"<br>
 
 Catatan port:
 Pada mesin pengembangan ini port 5000 digunakan macOS ControlCenter/AirPlay.
