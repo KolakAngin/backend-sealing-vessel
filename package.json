@@ -1,0 +1,40 @@
+{
+  "name": "backend-kapal",
+  "version": "1.0.0",
+  "description": "",
+  "main": "dist/src/server.js",
+  "scripts": {
+    "dev": "tsx watch src/server.ts",
+    "start": "node dist/src/server.js",
+    "build": "tsc",
+    "test": "NODE_ENV=test tsx --test --test-concurrency=1 tests/**/*.test.ts",
+    "typecheck": "tsc --noEmit",
+    "prisma:generate": "prisma generate",
+    "prisma:migrate": "prisma migrate dev",
+    "prisma:seed": "prisma db seed"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "devDependencies": {
+    "@types/multer": "^2.2.0",
+    "@types/node": "^26.3.0",
+    "@types/pg": "^8.23.1",
+    "prisma": "7.10.0",
+    "tsx": "^4.23.12",
+    "typescript": "^7.0.2"
+  },
+  "dependencies": {
+    "@prisma/adapter-pg": "7.10.0",
+    "@prisma/client": "7.10.0",
+    "@types/express": "^5.0.6",
+    "bcryptjs": "^3.0.3",
+    "dotenv": "^17.4.2",
+    "express": "^5.2.1",
+    "jose": "^6.2.10",
+    "multer": "^2.3.0",
+    "pg": "^8.23.0",
+    "zod": "^4.5.4"
+  }
+}

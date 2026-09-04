@@ -1,0 +1,697 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Get a free hosted Postgres database in seconds: `npx create-db`
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ======================================================
+// ENUMS
+// ======================================================
+
+enum UserRole {
+  ADMIN
+  SUPERVISOR
+  OPERATOR
+  VIEWER
+}
+
+enum VesselType {
+  TANKER
+  BARGE
+  SPOB
+  OTHER
+}
+
+enum Side {
+  PORT
+  STBD
+  CENTER
+}
+
+enum AvailabilityStatus {
+  AVAILABLE
+  NOT_AVAILABLE
+  INACTIVE
+}
+
+enum OperationType {
+  LOADING
+  DISCHARGING
+}
+
+enum ReportStatus {
+  DRAFT
+  SUBMITTED
+  VERIFIED
+  APPROVED
+  REJECTED
+}
+
+enum SealingRecordStatus {
+  SEALED
+  NOT_SEALED
+  NOT_APPLICABLE
+}
+
+enum SealStatus {
+  INSTALLED
+  VERIFIED
+  BROKEN
+  REMOVED
+  REPLACED
+}
+
+enum SealCondition {
+  GOOD
+  DAMAGED
+  BROKEN
+  MISSING
+  OTHER
+}
+
+enum AttachmentType {
+  PHOTO
+  DOCUMENT
+  OTHER
+}
+
+enum SignatureRole {
+  CHIEF_OFFICER
+  TERMINAL_REPRESENTATIVE
+  SURVEYOR
+}
+
+enum AuditAction {
+  CREATE
+  UPDATE
+  DELETE
+  SUBMIT
+  VERIFY
+  APPROVE
+  REJECT
+  INSTALL_SEAL
+  REMOVE_SEAL
+  REPLACE_SEAL
+}
+
+// ======================================================
+// USER
+// ======================================================
+
+model User {
+  id           String  @id @default(uuid()) @db.Uuid
+  username     String  @unique @db.VarChar(50)
+  passwordHash String  @db.Text
+  fullName     String  @db.VarChar(100)
+  email        String? @unique @db.VarChar(100)
+
+  role     UserRole @default(OPERATOR)
+  isActive Boolean  @default(true)
+
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @db.Timestamptz(3)
+
+  createdReports SealingReport[]
+  createdRecords SealingRecord[]
+  verifications  SealVerification[]
+  uploadedFiles  Attachment[]
+  signatures     ReportSignature[]
+  auditLogs      AuditLog[]
+
+  @@index([role])
+  @@index([isActive])
+  @@map("m_user")
+}
+
+// ======================================================
+// TERMINAL
+// ======================================================
+
+model Terminal {
+  id String @id @default(uuid()) @db.Uuid
+
+  code String @unique @db.VarChar(20)
+  name String @db.VarChar(150)
+
+  address String? @db.Text
+  city    String? @db.VarChar(100)
+
+  isActive Boolean @default(true)
+
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @db.Timestamptz(3)
+
+  sealingReports SealingReport[]
+
+  @@index([name])
+  @@index([isActive])
+  @@map("m_terminal")
+}
+
+// ======================================================
+// VESSEL
+// ======================================================
+
+model Vessel {
+  id String @id @default(uuid()) @db.Uuid
+
+  name      String  @db.VarChar(150)
+  imoNumber String? @unique @db.VarChar(20)
+
+  vesselType VesselType?
+  owner      String?     @db.VarChar(150)
+  flag       String?     @db.VarChar(100)
+
+  isActive Boolean @default(true)
+
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @db.Timestamptz(3)
+
+  compartments   Compartment[]
+  sealingPoints  VesselSealingPoint[]
+  sealingReports SealingReport[]
+
+  @@index([name])
+  @@index([isActive])
+  @@map("m_vessel")
+}
+
+// ======================================================
+// COMPARTMENT
+//
+// Contoh:
+// 1P
+// 1S
+// 2P
+// 2S
+// ...
+// 7P
+// 7S
+// SLOP-P
+// SLOP-S
+// ======================================================
+
+model Compartment {
+  id String @id @default(uuid()) @db.Uuid
+
+  vesselId String @db.Uuid
+
+  code String @db.VarChar(50)
+  name String @db.VarChar(100)
+
+  side Side?
+
+  sequence    Int?
+  description String? @db.Text
+
+  isActive Boolean @default(true)
+
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @db.Timestamptz(3)
+
+  vessel Vessel @relation(fields: [vesselId], references: [id], onDelete: Cascade)
+
+  sealingPoints VesselSealingPoint[]
+
+  @@unique([vesselId, code])
+  @@index([vesselId])
+  @@index([vesselId, sequence])
+  @@index([side])
+  @@map("m_compartment")
+}
+
+// ======================================================
+// SEALING CATEGORY
+//
+// Master kategori A-H sesuai TKO
+// ======================================================
+
+model SealingCategory {
+  id String @id @default(uuid()) @db.Uuid
+
+  code String @unique @db.VarChar(5)
+  name String @db.VarChar(255)
+
+  description String? @db.Text
+
+  sequence Int
+  isActive Boolean @default(true)
+
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @db.Timestamptz(3)
+
+  sealingPointTemplates SealingPointTemplate[]
+
+  @@index([sequence])
+  @@index([isActive])
+  @@map("sealing_category")
+}
+
+// ======================================================
+// SEALING POINT TEMPLATE
+//
+// Master titik sealing berdasarkan TKO.
+//
+// Contoh:
+// A-01 Sounding Hole / Flange Vapor Lock
+// A-02 Tank Cleaning Access
+// B-01 Cargo/Bunker/MARPOL Manifold
+// G-01 Cargo Sea Chest Valve
+// dst.
+// ======================================================
+
+model SealingPointTemplate {
+  id String @id @default(uuid()) @db.Uuid
+
+  categoryId String @db.Uuid
+
+  code String @unique @db.VarChar(20)
+  name String @db.VarChar(255)
+
+  description String? @db.Text
+
+  // TRUE apabila titik sealing menggunakan compartment.
+  // Contoh: kategori A dan F.
+  requiresCompartment Boolean @default(false)
+
+  // TRUE apabila titik sealing dapat memiliki posisi
+  // PORT / STBD.
+  // Contoh: manifold pada kategori B.
+  supportsSide Boolean @default(false)
+
+  sequence Int
+  isActive Boolean @default(true)
+
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @db.Timestamptz(3)
+
+  category SealingCategory @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+
+  vesselSealingPoints VesselSealingPoint[]
+
+  @@index([categoryId])
+  @@index([categoryId, sequence])
+  @@index([isActive])
+  @@map("sealing_point_template")
+}
+
+// ======================================================
+// VESSEL SEALING POINT
+//
+// Konfigurasi titik sealing aktual untuk kapal.
+//
+// Master TKO
+//      ↓
+// SealingPointTemplate
+//      ↓
+// VesselSealingPoint
+//      ↓
+// Compartment / Side / Location
+// ======================================================
+
+model VesselSealingPoint {
+  id String @id @default(uuid()) @db.Uuid
+
+  vesselId               String @db.Uuid
+  sealingPointTemplateId String @db.Uuid
+
+  // Optional karena tidak semua sealing point
+  // berhubungan dengan compartment.
+  compartmentId String? @db.Uuid
+
+  // Kode unik titik sealing di satu kapal.
+  //
+  // Contoh:
+  // A01-1P-01
+  // A01-1S-01
+  // B01-PORT-01
+  code String @db.VarChar(50)
+
+  // Nama khusus pada vessel apabila berbeda
+  // dengan nama master TKO.
+  //
+  // Contoh:
+  // "Pintu Pumproom"
+  displayName String? @db.VarChar(255)
+
+  // PORT / STBD / CENTER.
+  side Side?
+
+  // Lokasi tambahan.
+  //
+  // Contoh:
+  // Pump Room
+  // Main Deck
+  // Cargo Manifold
+  locationName String? @db.VarChar(150)
+
+  // Jika template yang sama mempunyai
+  // beberapa instance.
+  //
+  // Contoh:
+  // Sampling Bottle 1
+  // Sampling Bottle 2
+  instanceNo Int @default(1)
+
+  sequence Int?
+
+  availability AvailabilityStatus @default(AVAILABLE)
+
+  description String? @db.Text
+
+  isActive Boolean @default(true)
+
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @db.Timestamptz(3)
+
+  vessel Vessel @relation(fields: [vesselId], references: [id], onDelete: Cascade)
+
+  sealingPointTemplate SealingPointTemplate @relation(fields: [sealingPointTemplateId], references: [id], onDelete: Restrict)
+
+  compartment Compartment? @relation(fields: [compartmentId], references: [id], onDelete: SetNull)
+
+  sealingRecords SealingRecord[]
+
+  @@unique([vesselId, code])
+  @@index([vesselId])
+  @@index([sealingPointTemplateId])
+  @@index([compartmentId])
+  @@index([side])
+  @@index([vesselId, availability])
+  @@index([vesselId, sealingPointTemplateId])
+  @@map("vessel_sealing_point")
+}
+
+// ======================================================
+// SEALING REPORT
+//
+// Header laporan sealing.
+// ======================================================
+
+model SealingReport {
+  id String @id @default(uuid()) @db.Uuid
+
+  reportNo String @unique @db.VarChar(50)
+
+  vesselId    String @db.Uuid
+  terminalId  String @db.Uuid
+  createdById String @db.Uuid
+
+  cargo String? @db.VarChar(150)
+
+  operationType OperationType
+
+  reportDateTime DateTime @db.Timestamptz(3)
+
+  // Field "We Loading Master/Surveyor..."
+  loadingMasterSurveyorName String? @db.VarChar(150)
+
+  // Field "at the port of..."
+  portName String? @db.VarChar(150)
+
+  status ReportStatus @default(DRAFT)
+
+  remarks String? @db.Text
+
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @db.Timestamptz(3)
+
+  vessel Vessel @relation(fields: [vesselId], references: [id], onDelete: Restrict)
+
+  terminal Terminal @relation(fields: [terminalId], references: [id], onDelete: Restrict)
+
+  createdBy User @relation(fields: [createdById], references: [id], onDelete: Restrict)
+
+  sealingRecords SealingRecord[]
+  signatures     ReportSignature[]
+  attachments    Attachment[]
+
+  @@index([vesselId])
+  @@index([terminalId])
+  @@index([createdById])
+  @@index([reportDateTime])
+  @@index([status])
+  @@index([vesselId, reportDateTime])
+  @@map("sealing_report")
+}
+
+// ======================================================
+// SEALING RECORD
+//
+// Satu record = satu titik sealing
+// pada satu laporan.
+//
+// Contoh:
+// Report 001
+// Queen Sofia
+// 1P
+// Sounding Hole
+// ======================================================
+
+model SealingRecord {
+  id String @id @default(uuid()) @db.Uuid
+
+  sealingReportId      String @db.Uuid
+  vesselSealingPointId String @db.Uuid
+  createdById          String @db.Uuid
+
+  status SealingRecordStatus @default(SEALED)
+
+  notes String? @db.Text
+
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @db.Timestamptz(3)
+
+  sealingReport SealingReport @relation(fields: [sealingReportId], references: [id], onDelete: Cascade)
+
+  vesselSealingPoint VesselSealingPoint @relation(fields: [vesselSealingPointId], references: [id], onDelete: Restrict)
+
+  createdBy User @relation(fields: [createdById], references: [id], onDelete: Restrict)
+
+  // Satu sealing point dapat mempunyai
+  // satu atau lebih nomor segel.
+  seals Seal[]
+
+  // Foto/lampiran bersifat OPTIONAL.
+  // Bisa 0, 1, atau banyak.
+  attachments Attachment[]
+
+  @@unique([sealingReportId, vesselSealingPointId])
+  @@index([sealingReportId])
+  @@index([vesselSealingPointId])
+  @@index([createdById])
+  @@index([status])
+  @@map("sealing_record")
+}
+
+// ======================================================
+// SEAL
+//
+// Nomor segel fisik.
+// ======================================================
+
+model Seal {
+  id String @id @default(uuid()) @db.Uuid
+
+  sealingRecordId String @db.Uuid
+
+  sealNumber String @unique @db.VarChar(100)
+
+  status SealStatus @default(INSTALLED)
+
+  installedAt DateTime  @default(now()) @db.Timestamptz(3)
+  removedAt   DateTime? @db.Timestamptz(3)
+
+  notes String? @db.Text
+
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @db.Timestamptz(3)
+
+  sealingRecord SealingRecord @relation(fields: [sealingRecordId], references: [id], onDelete: Cascade)
+
+  verifications SealVerification[]
+
+  @@index([sealingRecordId])
+  @@index([status])
+  @@index([installedAt])
+  @@map("seal")
+}
+
+// ======================================================
+// SEAL VERIFICATION
+//
+// Riwayat pemeriksaan kondisi segel.
+// ======================================================
+
+model SealVerification {
+  id String @id @default(uuid()) @db.Uuid
+
+  sealId       String @db.Uuid
+  verifiedById String @db.Uuid
+
+  condition SealCondition
+
+  verifiedAt DateTime @default(now()) @db.Timestamptz(3)
+
+  remarks String? @db.Text
+
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+
+  seal Seal @relation(fields: [sealId], references: [id], onDelete: Cascade)
+
+  verifiedBy User @relation(fields: [verifiedById], references: [id], onDelete: Restrict)
+
+  attachments Attachment[]
+
+  @@index([sealId])
+  @@index([verifiedById])
+  @@index([verifiedAt])
+  @@index([condition])
+  @@map("seal_verification")
+}
+
+// ======================================================
+// ATTACHMENT
+//
+// Foto/lampiran bersifat OPTIONAL.
+//
+// Dapat dimiliki oleh:
+// - SealingReport
+// - SealingRecord
+// - SealVerification
+//
+// sequence digunakan untuk menentukan
+// urutan foto pada laporan.
+// ======================================================
+
+model Attachment {
+  id String @id @default(uuid()) @db.Uuid
+
+  sealingReportId String? @db.Uuid
+  sealingRecordId String? @db.Uuid
+  verificationId  String? @db.Uuid
+
+  uploadedById String @db.Uuid
+
+  type AttachmentType @default(PHOTO)
+
+  fileName String @db.VarChar(255)
+  fileUrl  String @db.Text
+
+  mimeType String @db.VarChar(100)
+
+  fileSize BigInt?
+
+  description String? @db.Text
+
+  // Urutan foto saat ditampilkan
+  // pada laporan.
+  sequence Int?
+
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+
+  sealingReport SealingReport? @relation(fields: [sealingReportId], references: [id], onDelete: Cascade)
+
+  sealingRecord SealingRecord? @relation(fields: [sealingRecordId], references: [id], onDelete: Cascade)
+
+  verification SealVerification? @relation(fields: [verificationId], references: [id], onDelete: Cascade)
+
+  uploadedBy User @relation(fields: [uploadedById], references: [id], onDelete: Restrict)
+
+  @@index([sealingReportId])
+  @@index([sealingRecordId])
+  @@index([verificationId])
+  @@index([uploadedById])
+  @@index([type])
+  @@index([sealingReportId, sequence])
+  @@index([sealingRecordId, sequence])
+  @@map("attachment")
+}
+
+// ======================================================
+// REPORT SIGNATURE
+//
+// TKO:
+// - Chief Officer
+// - Terminal Representative
+// - Surveyor
+// ======================================================
+
+model ReportSignature {
+  id String @id @default(uuid()) @db.Uuid
+
+  sealingReportId String @db.Uuid
+
+  // Optional karena Chief Officer / Surveyor
+  // mungkin bukan user aplikasi.
+  userId String? @db.Uuid
+
+  role SignatureRole
+
+  // Nama tetap disimpan walaupun
+  // tidak mempunyai akun aplikasi.
+  name String @db.VarChar(150)
+
+  // Optional.
+  signatureUrl String? @db.Text
+
+  signedAt DateTime? @db.Timestamptz(3)
+
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @db.Timestamptz(3)
+
+  sealingReport SealingReport @relation(fields: [sealingReportId], references: [id], onDelete: Cascade)
+
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@unique([sealingReportId, role])
+  @@index([userId])
+  @@map("report_signature")
+}
+
+// ======================================================
+// AUDIT LOG
+//
+// Menyimpan riwayat perubahan data.
+// ======================================================
+
+model AuditLog {
+  id String @id @default(uuid()) @db.Uuid
+
+  userId String? @db.Uuid
+
+  action AuditAction
+
+  // Contoh:
+  // VESSEL
+  // SEALING_REPORT
+  // SEALING_RECORD
+  // SEAL
+  entityType String @db.VarChar(50)
+
+  entityId String @db.Uuid
+
+  oldData Json?
+  newData Json?
+
+  ipAddress String? @db.VarChar(50)
+  userAgent String? @db.Text
+
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([entityType, entityId])
+  @@index([action])
+  @@index([createdAt])
+  @@map("audit_log")
+}
