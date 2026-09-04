@@ -319,11 +319,8 @@ curl http://localhost:5001/api/v1/attachments/ATTACHMENT_ID/file \
   -H "Authorization: Bearer ACCESS_TOKEN" \
   --output lampiran.png
 
-======================================================================
-7. PENGUJIAN TAHAP 6
-======================================================================
 
-Perintah yang dijalankan pada 3 September 2026:
+7. PENGUJIAN TAHAP 6
 
 1. npx prisma validate
    Hasil: LULUS - schema.prisma valid.
@@ -355,9 +352,7 @@ Driver pg menampilkan DeprecationWarning tentang client.query() yang dipanggil
 ketika client masih menjalankan query. Seluruh test tetap lulus. Peringatan ini
 perlu dipantau saat upgrade pg ke versi mayor berikutnya.
 
-======================================================================
 8. CHECKLIST UJI MANUAL POSTMAN
-======================================================================
 
 1. Jalankan npm run dev pada port 5001.
 2. GET /health dan pastikan HTTP 200.
