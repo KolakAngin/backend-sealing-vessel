@@ -60,14 +60,23 @@ export async function getVessel(id: string) {
   return item;
 }
 
-export const createVessel = (input: CreateVesselInput) => prisma.vessel.create({ data: {
-  name: input.name,
-  ...(input.imoNumber === undefined ? {} : { imoNumber: input.imoNumber }),
-  ...(input.vesselType === undefined ? {} : { vesselType: input.vesselType }),
-  ...(input.owner === undefined ? {} : { owner: input.owner }),
-  ...(input.flag === undefined ? {} : { flag: input.flag }),
-  isActive: input.isActive,
-} });
+export const createVessel = (input: CreateVesselInput) => prisma.vessel.create({
+  data: {
+    name: input.name,
+    ...(input.imoNumber === undefined ? {} : { imoNumber: input.imoNumber }),
+    ...(input.vesselType === undefined ? {} : { vesselType: input.vesselType }),
+    ...(input.owner === undefined ? {} : { owner: input.owner }),
+    ...(input.flag === undefined ? {} : { flag: input.flag }),
+    isActive: input.isActive,
+    compartments: {
+      create: input.compartments.map((compartment) => ({
+        ...withoutUndefined(compartment),
+        code: compartment.code.toUpperCase(),
+      })),
+    },
+  },
+  include: { compartments: { orderBy: { sequence: "asc" } } },
+});
 
 export const updateVessel = (id: string, input: UpdateVesselInput) => prisma.vessel.update({ where: { id }, data: withoutUndefined(input) });
 export const deactivateVessel = (id: string) => prisma.vessel.update({ where: { id }, data: { isActive: false } });

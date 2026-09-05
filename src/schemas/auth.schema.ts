@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-const userRole = z.enum(["ADMIN", "SUPERVISOR", "OPERATOR", "VIEWER"]);
+const userRole = z.enum(["ADMIN", "SUPERVISOR", "LOADING_MASTER", "UNLOADING_MASTER", "VIEWER"]);
 const idParams = z.object({ id: z.uuid("ID user harus berupa UUID yang valid") });
 
 export const loginBody = z.object({
@@ -13,7 +13,7 @@ export const createUserBody = z.object({
   password: z.string().min(8).max(72),
   fullName: z.string().trim().min(1).max(100),
   email: z.string().trim().email().max(100).nullable().optional(),
-  role: userRole.default("OPERATOR"),
+  role: userRole.default("LOADING_MASTER"),
   isActive: z.boolean().default(true),
 }).strict();
 

@@ -19,7 +19,8 @@ datasource db {
 enum UserRole {
   ADMIN
   SUPERVISOR
-  OPERATOR
+  LOADING_MASTER
+  UNLOADING_MASTER
   VIEWER
 }
 
@@ -49,10 +50,9 @@ enum OperationType {
 
 enum ReportStatus {
   DRAFT
-  SUBMITTED
-  VERIFIED
-  APPROVED
-  REJECTED
+  BERLAYAR
+  SANDAR
+  FINISH
 }
 
 enum SealingRecordStatus {
@@ -100,6 +100,9 @@ enum AuditAction {
   INSTALL_SEAL
   REMOVE_SEAL
   REPLACE_SEAL
+  DEPART
+  ARRIVE
+  FINISH
 }
 
 // ======================================================
@@ -113,13 +116,14 @@ model User {
   fullName     String  @db.VarChar(100)
   email        String? @unique @db.VarChar(100)
 
-  role     UserRole @default(OPERATOR)
+  role     UserRole @default(LOADING_MASTER)
   isActive Boolean  @default(true)
 
   createdAt DateTime @default(now()) @db.Timestamptz(3)
   updatedAt DateTime @updatedAt @db.Timestamptz(3)
 
-  createdReports SealingReport[]
+  createdReports SealingReport[] @relation("LoadingMaster")
+  unloadingAssignments SealingReport[] @relation("UnloadingMaster")
   createdRecords SealingRecord[]
   verifications  SealVerification[]
   uploadedFiles  Attachment[]
@@ -149,7 +153,8 @@ model Terminal {
   createdAt DateTime @default(now()) @db.Timestamptz(3)
   updatedAt DateTime @updatedAt @db.Timestamptz(3)
 
-  sealingReports SealingReport[]
+  originReports      SealingReport[] @relation("OriginTerminal")
+  destinationReports SealingReport[] @relation("DestinationTerminal")
 
   @@index([name])
   @@index([isActive])
@@ -402,8 +407,10 @@ model SealingReport {
   reportNo String @unique @db.VarChar(50)
 
   vesselId    String @db.Uuid
-  terminalId  String @db.Uuid
+  originTerminalId String @map("terminalId") @db.Uuid
+  destinationTerminalId String? @db.Uuid
   createdById String @db.Uuid
+  unloadingMasterId String? @db.Uuid
 
   cargo String? @db.VarChar(150)
 
@@ -419,6 +426,10 @@ model SealingReport {
 
   status ReportStatus @default(DRAFT)
 
+  departedAt DateTime? @db.Timestamptz(3)
+  arrivedAt  DateTime? @db.Timestamptz(3)
+  finishedAt DateTime? @db.Timestamptz(3)
+
   remarks String? @db.Text
 
   createdAt DateTime @default(now()) @db.Timestamptz(3)
@@ -426,17 +437,23 @@ model SealingReport {
 
   vessel Vessel @relation(fields: [vesselId], references: [id], onDelete: Restrict)
 
-  terminal Terminal @relation(fields: [terminalId], references: [id], onDelete: Restrict)
+  originTerminal Terminal @relation("OriginTerminal", fields: [originTerminalId], references: [id], onDelete: Restrict)
 
-  createdBy User @relation(fields: [createdById], references: [id], onDelete: Restrict)
+  destinationTerminal Terminal? @relation("DestinationTerminal", fields: [destinationTerminalId], references: [id], onDelete: Restrict)
+
+  createdBy User @relation("LoadingMaster", fields: [createdById], references: [id], onDelete: Restrict)
+
+  unloadingMaster User? @relation("UnloadingMaster", fields: [unloadingMasterId], references: [id], onDelete: Restrict)
 
   sealingRecords SealingRecord[]
   signatures     ReportSignature[]
   attachments    Attachment[]
 
   @@index([vesselId])
-  @@index([terminalId])
+  @@index([originTerminalId])
+  @@index([destinationTerminalId])
   @@index([createdById])
+  @@index([unloadingMasterId])
   @@index([reportDateTime])
   @@index([status])
   @@index([vesselId, reportDateTime])

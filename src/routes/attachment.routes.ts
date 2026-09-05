@@ -7,7 +7,7 @@ import { validateRequest } from "../middleware/validate-request.js";
 import * as schema from "../schemas/attachment.schema.js";
 
 export const attachmentRouter = Router();
-const writers = authorize("ADMIN", "SUPERVISOR", "OPERATOR");
+const writers = authorize("ADMIN", "SUPERVISOR", "LOADING_MASTER", "UNLOADING_MASTER");
 attachmentRouter.use(authenticate);
 
 attachmentRouter.post("/reports/:reportId/attachments", writers, uploadSingleFile, validateRequest(schema.uploadAttachmentRequest), controller.upload("report", "reportId"));

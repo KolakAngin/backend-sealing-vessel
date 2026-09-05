@@ -23,6 +23,15 @@ export const vesselTypeSchema = z.enum(["TANKER", "BARGE", "SPOB", "OTHER"]);
 export const sideSchema = z.enum(["PORT", "STBD", "CENTER"]);
 export const availabilitySchema = z.enum(["AVAILABLE", "NOT_AVAILABLE", "INACTIVE"]);
 
+const nestedCompartmentBody = z.object({
+  code: z.string().trim().min(1).max(50),
+  name: z.string().trim().min(1).max(100),
+  side: sideSchema.nullable().optional(),
+  sequence: z.number().int().positive().nullable().optional(),
+  description: nullableString(2_000),
+  isActive: z.boolean().default(true),
+}).strict();
+
 export const createVesselBody = z.object({
   name: z.string().trim().min(1).max(150),
   imoNumber: nullableString(20),
@@ -30,8 +39,9 @@ export const createVesselBody = z.object({
   owner: nullableString(150),
   flag: nullableString(100),
   isActive: z.boolean().default(true),
+  compartments: z.array(nestedCompartmentBody).min(1, "Minimal satu compartment wajib diisi").max(100),
 }).strict();
-export const updateVesselBody = createVesselBody.partial().extend({
+export const updateVesselBody = createVesselBody.omit({ compartments: true }).partial().extend({
   isActive: z.boolean().optional(),
 }).refine((data) => Object.keys(data).length > 0, "Minimal satu field harus dikirim");
 export const listVesselsQuery = pagingQuery.extend({ sortBy: z.enum(["name", "imoNumber", "createdAt", "updatedAt"]).default("name"), vesselType: vesselTypeSchema.optional() });

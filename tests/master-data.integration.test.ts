@@ -50,6 +50,7 @@ test("CRUD master data dan relasinya", async () => {
       name: `Vessel Test ${suffix}`,
       imoNumber: `IMO-${suffix}`,
       vesselType: "TANKER",
+      compartments: [{ code: "INIT", name: "Initial Compartment", sequence: 99 }],
     }));
     assert.equal(vessel.response.status, 201);
     vesselId = vessel.body.data.id;

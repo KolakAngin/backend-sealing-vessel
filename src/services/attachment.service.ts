@@ -40,20 +40,25 @@ function validateFile(file: Express.Multer.File) {
 }
 
 async function resolveOwner(owner: AttachmentOwner, actor: AttachmentActor) {
-  let report: { createdById: string; status: string } | null = null;
+  let report: { createdById: string; unloadingMasterId: string | null; status: string } | null = null;
   if (owner.kind === "report") {
-    report = await prisma.sealingReport.findUnique({ where: { id: owner.id }, select: { createdById: true, status: true } });
+    report = await prisma.sealingReport.findUnique({ where: { id: owner.id }, select: { createdById: true, unloadingMasterId: true, status: true } });
   } else if (owner.kind === "record") {
-    const record = await prisma.sealingRecord.findUnique({ where: { id: owner.id }, select: { sealingReport: { select: { createdById: true, status: true } } } });
+    const record = await prisma.sealingRecord.findUnique({ where: { id: owner.id }, select: { sealingReport: { select: { createdById: true, unloadingMasterId: true, status: true } } } });
     report = record?.sealingReport ?? null;
   } else {
-    const verification = await prisma.sealVerification.findUnique({ where: { id: owner.id }, select: { seal: { select: { sealingRecord: { select: { sealingReport: { select: { createdById: true, status: true } } } } } } } });
+    const verification = await prisma.sealVerification.findUnique({ where: { id: owner.id }, select: { seal: { select: { sealingRecord: { select: { sealingReport: { select: { createdById: true, unloadingMasterId: true, status: true } } } } } } } });
     report = verification?.seal.sealingRecord.sealingReport ?? null;
   }
   if (!report) throw new AppError(404, "Target lampiran tidak ditemukan");
-  assertOwnerOrManager(report.createdById, actor);
-  if (!["DRAFT", "SUBMITTED"].includes(report.status)) {
-    throw new AppError(400, "Lampiran hanya dapat ditambahkan pada laporan DRAFT atau SUBMITTED");
+  if (owner.kind === "verification") {
+    if (report.status !== "SANDAR") throw new AppError(400, "Bukti pemeriksaan hanya dapat ditambahkan ketika kapal SANDAR");
+    if (actor.role !== "UNLOADING_MASTER" && !canManage(actor)) throw new AppError(403, "Hanya Unloading Master atau Supervisor yang dapat mengunggah bukti pemeriksaan");
+    if (report.unloadingMasterId && report.unloadingMasterId !== actor.id && !canManage(actor)) throw new AppError(403, "Perjalanan ditugaskan kepada Unloading Master lain");
+  } else {
+    assertOwnerOrManager(report.createdById, actor);
+    if (actor.role !== "LOADING_MASTER" && !canManage(actor)) throw new AppError(403, "Hanya Loading Master atau Supervisor yang dapat mengunggah lampiran loading");
+    if (report.status !== "DRAFT") throw new AppError(400, "Lampiran loading hanya dapat ditambahkan ketika perjalanan DRAFT");
   }
 }
 

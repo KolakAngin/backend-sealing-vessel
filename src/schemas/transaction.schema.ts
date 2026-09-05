@@ -6,18 +6,20 @@ const paging = z.object({ page: z.coerce.number().int().positive().default(1), l
 const detail = z.object({ body: z.unknown(), params: z.object({ id: uuid }), query: z.object({}) });
 
 export const createReportBody = z.object({
-  reportNo: z.string().trim().min(1).max(50), vesselId: uuid, terminalId: uuid,
-  cargo: nullableText(150), operationType: z.enum(["LOADING", "DISCHARGING"]),
+  reportNo: z.string().trim().min(1).max(50), vesselId: uuid,
+  originTerminalId: uuid, destinationTerminalId: uuid, unloadingMasterId: uuid.nullable().optional(),
+  cargo: nullableText(150), operationType: z.literal("LOADING").default("LOADING"),
   reportDateTime: z.coerce.date(), loadingMasterSurveyorName: nullableText(150),
   portName: nullableText(150), remarks: nullableText(2_000),
 }).strict();
 export const updateReportBody = createReportBody.partial().refine((v) => Object.keys(v).length > 0, "Minimal satu field harus dikirim");
-export const listReportsQuery = paging.extend({ search: z.string().trim().min(1).max(150).optional(), vesselId: uuid.optional(), terminalId: uuid.optional(), status: z.enum(["DRAFT", "SUBMITTED", "VERIFIED", "APPROVED", "REJECTED"]).optional(), operationType: z.enum(["LOADING", "DISCHARGING"]).optional(), sortOrder: z.enum(["asc", "desc"]).default("desc") });
+export const listReportsQuery = paging.extend({ search: z.string().trim().min(1).max(150).optional(), vesselId: uuid.optional(), originTerminalId: uuid.optional(), destinationTerminalId: uuid.optional(), status: z.enum(["DRAFT", "BERLAYAR", "SANDAR", "FINISH"]).optional(), sortOrder: z.enum(["asc", "desc"]).default("desc") });
 export const createReportRequest = z.object({ body: createReportBody, params: z.object({}), query: z.object({}) });
 export const updateReportRequest = z.object({ body: updateReportBody, params: z.object({ id: uuid }), query: z.object({}) });
 export const listReportsRequest = z.object({ body: z.unknown(), params: z.object({}), query: listReportsQuery });
 export const reportDetailRequest = detail;
 export const transitionReportRequest = z.object({ body: z.object({ remarks: nullableText(2_000) }).strict(), params: z.object({ id: uuid }), query: z.object({}) });
+export const journeyTransitionRequest = z.object({ body: z.object({ occurredAt: z.coerce.date().optional(), remarks: nullableText(2_000) }).strict(), params: z.object({ id: uuid }), query: z.object({}) });
 
 export const createRecordBody = z.object({ vesselSealingPointId: uuid, status: z.enum(["SEALED", "NOT_SEALED", "NOT_APPLICABLE"]).default("SEALED"), notes: nullableText(2_000) }).strict();
 export const updateRecordBody = createRecordBody.omit({ vesselSealingPointId: true }).partial().refine((v) => Object.keys(v).length > 0, "Minimal satu field harus dikirim");
