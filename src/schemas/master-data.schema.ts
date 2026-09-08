@@ -19,9 +19,85 @@ const idParams = z.object({ id: uuid });
 const emptyQuery = z.object({});
 const detailRequest = z.object({ body: z.unknown(), params: idParams, query: emptyQuery });
 
-export const vesselTypeSchema = z.enum(["TANKER", "BARGE", "SPOB", "OTHER"]);
+export const vesselTypeSchema = z.enum(["TANKER", "BARGE", "SPOB", "OTHER", "MT", "OB"]);
+export const drawingStatusSchema = z.enum(["YES", "NO"]);
 export const sideSchema = z.enum(["PORT", "STBD", "CENTER"]);
 export const availabilitySchema = z.enum(["AVAILABLE", "NOT_AVAILABLE", "INACTIVE"]);
+
+const nullableNonnegativeNumber = z.number().finite().nonnegative().nullable().optional();
+const nullableNonnegativeInteger = z.number().int().nonnegative().nullable().optional();
+const optionalSequence = z.number().int().positive().nullable().optional();
+const masterListQuery = pagingQuery.extend({
+  sortBy: z.enum(["name", "sequence", "createdAt", "updatedAt"]).default("sequence"),
+});
+const codedMasterListQuery = pagingQuery.extend({
+  sortBy: z.enum(["code", "name", "sequence", "createdAt", "updatedAt"]).default("sequence"),
+});
+
+export const createPlantBody = z.object({
+  code: z.string().trim().min(1).max(20),
+  name: z.string().trim().min(1).max(150),
+  sequence: optionalSequence,
+  isActive: z.boolean().default(true),
+}).strict();
+export const updatePlantBody = createPlantBody.partial().extend({ isActive: z.boolean().optional() })
+  .refine((data) => Object.keys(data).length > 0, "Minimal satu field harus dikirim");
+export const listPlantsRequest = z.object({ body: z.unknown(), params: z.object({}), query: codedMasterListQuery });
+export const createPlantRequest = z.object({ body: createPlantBody, params: z.object({}), query: emptyQuery });
+export const updatePlantRequest = z.object({ body: updatePlantBody, params: idParams, query: emptyQuery });
+export const plantDetailRequest = detailRequest;
+
+export const createJettyBody = z.object({
+  name: z.string().trim().min(1).max(150),
+  sequence: optionalSequence,
+  isActive: z.boolean().default(true),
+}).strict();
+export const updateJettyBody = createJettyBody.partial().extend({ isActive: z.boolean().optional() })
+  .refine((data) => Object.keys(data).length > 0, "Minimal satu field harus dikirim");
+export const listJettiesRequest = z.object({ body: z.unknown(), params: z.object({}), query: masterListQuery });
+export const createJettyRequest = z.object({ body: createJettyBody, params: z.object({}), query: emptyQuery });
+export const updateJettyRequest = z.object({ body: updateJettyBody, params: idParams, query: emptyQuery });
+export const jettyDetailRequest = detailRequest;
+
+export const createActivityBody = z.object({
+  code: z.string().trim().min(1).max(50),
+  name: z.string().trim().min(1).max(100),
+  sequence: optionalSequence,
+  isActive: z.boolean().default(true),
+}).strict();
+export const updateActivityBody = createActivityBody.partial().extend({ isActive: z.boolean().optional() })
+  .refine((data) => Object.keys(data).length > 0, "Minimal satu field harus dikirim");
+export const listActivitiesRequest = z.object({ body: z.unknown(), params: z.object({}), query: codedMasterListQuery });
+export const createActivityRequest = z.object({ body: createActivityBody, params: z.object({}), query: emptyQuery });
+export const updateActivityRequest = z.object({ body: updateActivityBody, params: idParams, query: emptyQuery });
+export const activityDetailRequest = detailRequest;
+
+export const createProductBody = z.object({
+  name: z.string().trim().min(1).max(150),
+  sequence: optionalSequence,
+  isActive: z.boolean().default(true),
+}).strict();
+export const updateProductBody = createProductBody.partial().extend({ isActive: z.boolean().optional() })
+  .refine((data) => Object.keys(data).length > 0, "Minimal satu field harus dikirim");
+export const listProductsRequest = z.object({ body: z.unknown(), params: z.object({}), query: masterListQuery });
+export const createProductRequest = z.object({ body: createProductBody, params: z.object({}), query: emptyQuery });
+export const updateProductRequest = z.object({ body: updateProductBody, params: idParams, query: emptyQuery });
+export const productDetailRequest = detailRequest;
+
+export const createUnitOfMeasureBody = z.object({
+  code: z.string().trim().min(1).max(20),
+  sequence: optionalSequence,
+  isActive: z.boolean().default(true),
+}).strict();
+export const updateUnitOfMeasureBody = createUnitOfMeasureBody.partial().extend({ isActive: z.boolean().optional() })
+  .refine((data) => Object.keys(data).length > 0, "Minimal satu field harus dikirim");
+const listUnitsOfMeasureQuery = pagingQuery.extend({
+  sortBy: z.enum(["code", "sequence", "createdAt", "updatedAt"]).default("sequence"),
+});
+export const listUnitsOfMeasureRequest = z.object({ body: z.unknown(), params: z.object({}), query: listUnitsOfMeasureQuery });
+export const createUnitOfMeasureRequest = z.object({ body: createUnitOfMeasureBody, params: z.object({}), query: emptyQuery });
+export const updateUnitOfMeasureRequest = z.object({ body: updateUnitOfMeasureBody, params: idParams, query: emptyQuery });
+export const unitOfMeasureDetailRequest = detailRequest;
 
 const nestedCompartmentBody = z.object({
   code: z.string().trim().min(1).max(50),
@@ -36,15 +112,22 @@ export const createVesselBody = z.object({
   name: z.string().trim().min(1).max(150),
   imoNumber: nullableString(20),
   vesselType: vesselTypeSchema.nullable().optional(),
+  productGroup: nullableString(100),
   owner: nullableString(150),
   flag: nullableString(100),
+  deadweightTonnage: nullableNonnegativeNumber,
+  capacity: nullableNonnegativeNumber,
+  tankCount: nullableNonnegativeInteger,
+  drawingStatus: drawingStatusSchema.nullable().optional(),
+  drawingFileUrl: nullableString(2_000),
+  drawingLink: nullableString(2_000),
   isActive: z.boolean().default(true),
   compartments: z.array(nestedCompartmentBody).min(1, "Minimal satu compartment wajib diisi").max(100),
 }).strict();
 export const updateVesselBody = createVesselBody.omit({ compartments: true }).partial().extend({
   isActive: z.boolean().optional(),
 }).refine((data) => Object.keys(data).length > 0, "Minimal satu field harus dikirim");
-export const listVesselsQuery = pagingQuery.extend({ sortBy: z.enum(["name", "imoNumber", "createdAt", "updatedAt"]).default("name"), vesselType: vesselTypeSchema.optional() });
+export const listVesselsQuery = pagingQuery.extend({ sortBy: z.enum(["name", "imoNumber", "vesselType", "productGroup", "tankCount", "createdAt", "updatedAt"]).default("name"), vesselType: vesselTypeSchema.optional() });
 export const createVesselRequest = z.object({ body: createVesselBody, params: z.object({}), query: emptyQuery });
 export const updateVesselRequest = z.object({ body: updateVesselBody, params: idParams, query: emptyQuery });
 export const listVesselsRequest = z.object({ body: z.unknown(), params: z.object({}), query: listVesselsQuery });
@@ -114,6 +197,7 @@ export const createVesselPointBody = z.object({
   side: sideSchema.nullable().optional(),
   locationName: nullableString(150),
   instanceNo: z.number().int().positive().default(1),
+  isRequired: z.boolean().default(true),
   sequence: z.number().int().nonnegative().nullable().optional(),
   availability: availabilitySchema.default("AVAILABLE"),
   description: nullableString(2_000),
@@ -121,6 +205,7 @@ export const createVesselPointBody = z.object({
 }).strict();
 export const updateVesselPointBody = createVesselPointBody.partial().extend({
   instanceNo: z.number().int().positive().optional(),
+  isRequired: z.boolean().optional(),
   availability: availabilitySchema.optional(),
   isActive: z.boolean().optional(),
 }).refine((data) => Object.keys(data).length > 0, "Minimal satu field harus dikirim");
@@ -147,6 +232,21 @@ export const listCategoryTemplatesRequest = z.object({
 });
 
 export type IdParams = z.infer<typeof idParams>;
+export type CreatePlantInput = z.infer<typeof createPlantBody>;
+export type UpdatePlantInput = z.infer<typeof updatePlantBody>;
+export type ListPlantsInput = z.infer<typeof codedMasterListQuery>;
+export type CreateJettyInput = z.infer<typeof createJettyBody>;
+export type UpdateJettyInput = z.infer<typeof updateJettyBody>;
+export type ListJettiesInput = z.infer<typeof masterListQuery>;
+export type CreateActivityInput = z.infer<typeof createActivityBody>;
+export type UpdateActivityInput = z.infer<typeof updateActivityBody>;
+export type ListActivitiesInput = z.infer<typeof codedMasterListQuery>;
+export type CreateProductInput = z.infer<typeof createProductBody>;
+export type UpdateProductInput = z.infer<typeof updateProductBody>;
+export type ListProductsInput = z.infer<typeof masterListQuery>;
+export type CreateUnitOfMeasureInput = z.infer<typeof createUnitOfMeasureBody>;
+export type UpdateUnitOfMeasureInput = z.infer<typeof updateUnitOfMeasureBody>;
+export type ListUnitsOfMeasureInput = z.infer<typeof listUnitsOfMeasureQuery>;
 export type CreateVesselInput = z.infer<typeof createVesselBody>;
 export type UpdateVesselInput = z.infer<typeof updateVesselBody>;
 export type ListVesselsInput = z.infer<typeof listVesselsQuery>;

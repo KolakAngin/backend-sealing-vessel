@@ -22,6 +22,16 @@ export async function saveFile(key: string, content: Buffer) {
   return destination;
 }
 
+export async function saveFileWithRollback<T>(key: string, content: Buffer, operation: () => Promise<T>) {
+  await saveFile(key, content);
+  try {
+    return await operation();
+  } catch (error) {
+    await removeFile(key);
+    throw error;
+  }
+}
+
 export function resolveFile(key: string) {
   return safePath(key);
 }

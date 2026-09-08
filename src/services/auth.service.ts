@@ -1,5 +1,7 @@
+import { randomUUID } from "node:crypto";
+
 import { prisma } from "../config/prisma.js";
-import type { Prisma } from "../generated/prisma/client.js";
+import type { AuditAction, Prisma } from "../generated/prisma/client.js";
 import type {
   CreateUserInput,
   ListUsersInput,
@@ -21,6 +23,18 @@ const publicUserSelect = {
   createdAt: true,
   updatedAt: true,
 } satisfies Prisma.UserSelect;
+
+const asJson = (value: unknown) => JSON.parse(JSON.stringify(value)) as Prisma.InputJsonValue;
+const userAudit = (actorId: string, action: AuditAction, entityId: string, oldData?: unknown, newData?: unknown) => prisma.auditLog.create({
+  data: {
+    userId: actorId,
+    action,
+    entityType: "USER",
+    entityId,
+    ...(oldData === undefined ? {} : { oldData: asJson(oldData) }),
+    ...(newData === undefined ? {} : { newData: asJson(newData) }),
+  },
+});
 
 export async function login(input: LoginInput) {
   const user = await prisma.user.findUnique({
@@ -79,38 +93,55 @@ export async function getUser(id: string) {
   return user;
 }
 
-export async function createUser(input: CreateUserInput) {
+export async function createUser(input: CreateUserInput, actorId: string) {
   const passwordHash = await hashPassword(input.password);
-  return prisma.user.create({
-    data: {
+  const id = randomUUID();
+  const data = {
+      id,
       username: input.username.toLowerCase(),
       passwordHash,
       fullName: input.fullName,
       ...(input.email === undefined ? {} : { email: input.email?.toLowerCase() ?? null }),
       role: input.role,
       isActive: input.isActive,
-    },
-    select: publicUserSelect,
-  });
+  };
+  const publicData = { id, username: data.username, fullName: data.fullName, email: data.email ?? null, role: data.role, isActive: data.isActive };
+  const [user] = await prisma.$transaction([
+    prisma.user.create({ data, select: publicUserSelect }),
+    userAudit(actorId, "CREATE", id, undefined, publicData),
+  ]);
+  return user;
 }
 
-export async function updateUser(id: string, input: UpdateUserInput) {
+export async function updateUser(id: string, input: UpdateUserInput, actorId: string) {
+  const old = await getUser(id);
   const passwordHash = input.password ? await hashPassword(input.password) : undefined;
-  return prisma.user.update({
-    where: { id },
-    data: {
+  const data = {
       ...(input.username === undefined ? {} : { username: input.username.toLowerCase() }),
       ...(passwordHash === undefined ? {} : { passwordHash }),
       ...(input.fullName === undefined ? {} : { fullName: input.fullName }),
       ...(input.email === undefined ? {} : { email: input.email?.toLowerCase() ?? null }),
       ...(input.role === undefined ? {} : { role: input.role }),
       ...(input.isActive === undefined ? {} : { isActive: input.isActive }),
-    },
-    select: publicUserSelect,
-  });
+  };
+  const auditData = {
+    ...Object.fromEntries(Object.entries(data).filter(([key]) => key !== "passwordHash")),
+    ...(passwordHash === undefined ? {} : { passwordChanged: true }),
+  };
+  const [user] = await prisma.$transaction([
+    prisma.user.update({ where: { id }, data, select: publicUserSelect }),
+    userAudit(actorId, "UPDATE", id, old, auditData),
+  ]);
+  return user;
 }
 
 export async function deactivateUser(id: string, actorId: string) {
   if (id === actorId) throw new AppError(400, "Anda tidak dapat menonaktifkan akun sendiri");
-  return prisma.user.update({ where: { id }, data: { isActive: false }, select: publicUserSelect });
+  const old = await getUser(id);
+  const data = { isActive: false };
+  const [user] = await prisma.$transaction([
+    prisma.user.update({ where: { id }, data, select: publicUserSelect }),
+    userAudit(actorId, "DELETE", id, old, data),
+  ]);
+  return user;
 }

@@ -1,6 +1,6 @@
 DOKUMENTASI BACKEND APLIKASI SEGEL KAPAL
 Tahap 6 - Pengujian dan Dokumentasi API
-Tanggal verifikasi: 3 September 2026
+Tanggal verifikasi: 7 September 2026
 
 1. RINGKASAN
 
@@ -117,8 +117,9 @@ Kode HTTP utama:
 Role yang tersedia:
 
 - ADMIN      Akses penuh dan manajemen user
-- SUPERVISOR Kelola master/transaksi dan review laporan
-- OPERATOR   Membuat dan mengelola transaksi miliknya
+- SUPERVISOR Dapat menjalankan proses loading dan unloading
+- LOADING_MASTER Memasang seal dan memberangkatkan kapal
+- UNLOADING_MASTER Menerima kapal dan memeriksa seal di tujuan
 - VIEWER     Akses baca pada endpoint yang diizinkan
 
 Login:
@@ -169,7 +170,69 @@ Query daftar user: page, limit, search, role, isActive, sortBy, sortOrder.
 - PATCH  /terminals/:id       ADMIN/SUPERVISOR
 - DELETE /terminals/:id       ADMIN; menonaktifkan terminal
 
-6.3 Vessel
+6.3 Master referensi workbook (khusus ADMIN untuk perubahan)
+
+Semua user terautentikasi dapat membaca daftar/detail. Hanya ADMIN yang dapat
+membuat, mengubah, atau menonaktifkan data. DELETE adalah soft-delete dengan
+menetapkan isActive=false.
+
+Plant:
+
+- GET    /plants
+- POST   /plants
+- GET    /plants/:id
+- PATCH  /plants/:id
+- DELETE /plants/:id
+
+Body: code (wajib, unik), name (wajib), sequence (opsional), isActive (opsional).
+
+Jetty:
+
+- GET    /jetties
+- POST   /jetties
+- GET    /jetties/:id
+- PATCH  /jetties/:id
+- DELETE /jetties/:id
+
+Body: name (wajib, unik), sequence (opsional), isActive (opsional).
+
+Activity:
+
+- GET    /activities
+- POST   /activities
+- GET    /activities/:id
+- PATCH  /activities/:id
+- DELETE /activities/:id
+
+Body: code (wajib, unik), name (wajib), sequence (opsional), isActive (opsional).
+
+Product:
+
+- GET    /products
+- POST   /products
+- GET    /products/:id
+- PATCH  /products/:id
+- DELETE /products/:id
+
+Body: name (wajib, unik), sequence (opsional), isActive (opsional).
+
+Unit of Measure:
+
+- GET    /units-of-measure
+- POST   /units-of-measure
+- GET    /units-of-measure/:id
+- PATCH  /units-of-measure/:id
+- DELETE /units-of-measure/:id
+
+Body: code (wajib, unik), sequence (opsional), isActive (opsional).
+
+Query umum daftar: page, limit, search, isActive, sortBy, sortOrder. Plant,
+Jetty, Activity, Product, dan Unit of Measure adalah master mandiri. Product-UoM
+tetap tidak direlasikan karena workbook tidak menetapkannya. Relasi Plant-Jetty
+untuk validasi shipment dikonfigurasi eksplisit melalui assignment dan tidak
+diisi otomatis dari workbook.
+
+6.4 Vessel (khusus ADMIN untuk perubahan)
 
 - GET    /vessels
 - POST   /vessels
@@ -179,7 +242,34 @@ Query daftar user: page, limit, search, role, isActive, sortBy, sortOrder.
 - GET    /vessels/:vesselId/compartments
 - GET    /vessels/:vesselId/sealing-points
 
-6.4 Compartment
+Vessel baru wajib dibuat bersama minimal satu compartment dalam satu request.
+Pembuatan vessel dan compartments berjalan sebagai satu transaksi database.
+
+Contoh:
+
+{
+  "name": "MT GLOBAL TOP",
+  "imoNumber": "IMO1234567",
+  "vesselType": "MT",
+  "productGroup": "LPG",
+  "owner": "PT Contoh Pemilik Kapal",
+  "deadweightTonnage": 12500.125,
+  "capacity": 9000.500,
+  "tankCount": 2,
+  "drawingStatus": "YES",
+  "drawingFileUrl": "drawings/mt-global-top.pdf",
+  "drawingLink": "https://example.invalid/drawing/mt-global-top",
+  "compartments": [
+    { "code": "1P", "name": "Cargo Tank 1 Port", "side": "PORT", "sequence": 1 },
+    { "code": "1S", "name": "Cargo Tank 1 Starboard", "side": "STBD", "sequence": 2 }
+  ]
+}
+
+Nilai vesselType: TANKER, BARGE, SPOB, OTHER, MT, OB. Nilai drawingStatus:
+YES atau NO. deadweightTonnage, capacity, dan tankCount harus >= 0 bila diisi.
+Field spesifikasi tambahan bersifat nullable agar vessel lama tetap valid.
+
+6.5 Compartment
 
 - GET    /compartments
 - POST   /compartments
@@ -187,7 +277,7 @@ Query daftar user: page, limit, search, role, isActive, sortBy, sortOrder.
 - PATCH  /compartments/:id
 - DELETE /compartments/:id
 
-6.5 Kategori dan template titik sealing
+6.6 Kategori dan template titik sealing
 
 - GET    /sealing-categories
 - POST   /sealing-categories
@@ -201,7 +291,7 @@ Query daftar user: page, limit, search, role, isActive, sortBy, sortOrder.
 - PATCH  /sealing-point-templates/:id
 - DELETE /sealing-point-templates/:id
 
-6.6 Titik sealing vessel
+6.7 Titik sealing vessel
 
 - GET    /vessel-sealing-points
 - POST   /vessel-sealing-points
@@ -210,27 +300,83 @@ Query daftar user: page, limit, search, role, isActive, sortBy, sortOrder.
 - DELETE /vessel-sealing-points/:id
 
 Aturan akses master data:
-GET memerlukan autentikasi. POST/PATCH memerlukan ADMIN atau SUPERVISOR.
-DELETE memerlukan ADMIN.
+GET memerlukan autentikasi. Vessel, compartment, dan konfigurasi titik sealing
+vessel hanya dapat dibuat, diubah, atau dinonaktifkan oleh ADMIN.
 
-6.7 Laporan sealing
+6.8 Shipment/Voyage dan laporan sealing
+
+Endpoint canonical:
+
+- GET    /shipments atau /voyages
+- POST   /shipments atau /voyages
+- GET    /shipments/:id atau /voyages/:id
+- PATCH  /shipments/:id atau /voyages/:id
+- DELETE /shipments/:id atau /voyages/:id
+- POST   /shipments/:id/prepare-seals atau /voyages/:id/prepare-seals
+- GET    /shipments/:id/validation atau /voyages/:id/validation
+- POST   /shipments/:id/finalize atau /voyages/:id/finalize
+
+Create canonical mewajibkan vesselId, activityId, reportDateTime, voyageNumber,
+shipmentNumber, productId, loadingPlantId, loadingJettyId, dischargePlantId,
+dischargeJettyId, dan sealingStatus. Seluruh master harus aktif; Activity harus
+LOADING, DISCHARGE, atau ROB; serta kedua pasangan Plant-Jetty harus mempunyai
+assignment. shipmentNumber unik. sealingStatus terpisah dari status perjalanan.
+sealingProcessStatus dikelola server dengan nilai NOT_STARTED, IN_PROGRESS,
+READY, IN_TRANSIT, VERIFICATION, dan FINALIZED. loadingMasterId merupakan
+assignment operasional terpisah dari createdById; unloadingMasterId wajib
+ditetapkan sebelum depart.
+
+prepare-seals membaca versi form, VesselFormProfile, section A-H tersedia,
+compartment aktif, dan seluruh vessel sealing point aktual. Proses menyimpan
+snapshot immutable serta membuat record berstatus NOT_SEALED. Beberapa point
+dalam satu compartment didukung. Proses idempotent dan tidak lagi membuat
+SYS-COMPARTMENT; record SYS-COMPARTMENT lama tetap dipertahankan. Detail:
+dokumentasi/API_FORM_SNAPSHOT.md.
+
+Transaksi pengisian form A-H menggunakan snapshot tersebut:
+
+- GET    /shipments/:reportId/form
+- PUT    /shipments/:reportId/form/points/:pointId
+- PATCH  /shipments/:reportId/form/points/:pointId
+- DELETE /shipments/:reportId/form/points/:pointId
+- PUT    /shipments/:reportId/form/sections/:sectionCode
+
+Prefix /voyages dan /reports menyediakan endpoint yang sama. Response GET
+mengembalikan section, row, column, compartment, side, instance, sequence,
+status, catatan, dan seluruh nomor segel. PUT/PATCH/DELETE/batch hanya diizinkan
+ketika DRAFT. Satu compartment dapat mempunyai beberapa point termasuk lima
+point Bagian A, dan satu equipment dapat mempunyai beberapa nomor segel.
+Section tidak tersedia, termasuk G, tidak dapat diisi. Nomor segel dinormalisasi
+uppercase dan mengikuti unique global database. Detail:
+dokumentasi/API_FORM_A_H_ENTRY.md.
+
+Assignment Plant-Jetty:
+
+- GET    /plant-jetty-assignments
+- POST   /plant-jetty-assignments (ADMIN)
+- DELETE /plant-jetty-assignments/:id (ADMIN)
+
+Dokumentasi payload dan filter lengkap: dokumentasi/API_SHIPMENT_VOYAGE.md.
+
+Endpoint laporan legacy:
 
 - GET    /reports
 - POST   /reports
 - GET    /reports/:id
 - PATCH  /reports/:id
 - DELETE /reports/:id
-- POST   /reports/:id/submit
-- POST   /reports/:id/verify
-- POST   /reports/:id/approve
-- POST   /reports/:id/reject
+- POST   /reports/:id/depart
+- POST   /reports/:id/arrive
+- POST   /reports/:id/finish
 
 Contoh membuat laporan:
 
 {
   "reportNo": "RPT-2026-001",
   "vesselId": "UUID_VESSEL",
-  "terminalId": "UUID_TERMINAL",
+  "originTerminalId": "UUID_TERMINAL_ASAL",
+  "destinationTerminalId": "UUID_TERMINAL_TUJUAN",
+  "unloadingMasterId": "UUID_UNLOADING_MASTER",
   "cargo": "Crude Oil",
   "operationType": "LOADING",
   "reportDateTime": "2026-09-03T08:00:00.000Z",
@@ -239,18 +385,27 @@ Contoh membuat laporan:
   "remarks": "Catatan"
 }
 
-Status laporan dan transisi:
+Status perjalanan dan transisi:
 
-DRAFT -> SUBMITTED -> VERIFIED -> APPROVED
-                    \-> REJECTED
-         \-----------------------> REJECTED
+DRAFT -> BERLAYAR -> SANDAR -> FINISH
 
-- Submit dilakukan ADMIN/SUPERVISOR/OPERATOR pemilik laporan.
-- Verify/approve/reject hanya ADMIN atau SUPERVISOR.
-- Laporan harus memiliki minimal satu record sebelum submit.
-- Laporan DRAFT dapat diedit atau dihapus oleh pemilik/manager.
+- LOADING_MASTER mengisi data dan seal ketika DRAFT.
+- Depart hanya berhasil jika point snapshot AVAILABLE dan required sudah
+  SEALED dengan nomor segel, atau ditandai NOT_APPLICABLE.
+- Point opsional, section tidak tersedia, NOT_APPLICABLE, dan dokumentasi
+  tidak memblokir depart/finalisasi.
+- Setelah BERLAYAR, data pemasangan seal terkunci.
+- UNLOADING_MASTER menerima kapal dan mengubah status menjadi SANDAR.
+- Pemeriksaan seal hanya dapat dilakukan ketika SANDAR.
+- Finish/finalize hanya berhasil jika seluruh seal aktif sudah diperiksa dan
+  menyimpan finalSnapshot immutable.
+- Setelah FINISH, perjalanan bersifat baca saja.
+- SUPERVISOR dapat menjalankan proses loading dan unloading.
 
-6.8 Record sealing
+Endpoint /reports tetap tersedia untuk kompatibilitas aplikasi dan laporan lama.
+Validasi dan lifecycle lengkap: dokumentasi/API_SHIPMENT_LIFECYCLE.md.
+
+6.9 Record sealing
 
 - GET    /reports/:reportId/records
 - POST   /reports/:reportId/records
@@ -259,7 +414,7 @@ DRAFT -> SUBMITTED -> VERIFIED -> APPROVED
 
 Status record: SEALED, NOT_SEALED, NOT_APPLICABLE.
 
-6.9 Seal dan verifikasi
+6.10 Seal dan verifikasi
 
 - POST  /records/:recordId/seals
 - PATCH /seals/:id
@@ -269,7 +424,7 @@ Status record: SEALED, NOT_SEALED, NOT_APPLICABLE.
 
 Kondisi verifikasi: GOOD, DAMAGED, BROKEN, MISSING, OTHER.
 
-6.10 Tanda tangan laporan
+6.11 Tanda tangan laporan
 
 - GET    /reports/:reportId/signatures
 - POST   /reports/:reportId/signatures
@@ -278,13 +433,13 @@ Kondisi verifikasi: GOOD, DAMAGED, BROKEN, MISSING, OTHER.
 
 Role tanda tangan: CHIEF_OFFICER, TERMINAL_REPRESENTATIVE, SURVEYOR.
 
-6.11 Audit log
+6.12 Audit log
 
 - GET /audit-logs              ADMIN/SUPERVISOR
 
 Query: page, limit, entityType, entityId, action.
 
-6.12 Lampiran gambar dan dokumen
+6.13 Lampiran gambar dan dokumen
 
 - POST   /reports/:reportId/attachments
 - POST   /records/:recordId/attachments
@@ -302,7 +457,8 @@ Upload menggunakan multipart/form-data:
 
 Format file yang diterima: JPEG, PNG, WebP, PDF.
 Batas default: 10 MB. Sistem memvalidasi signature/magic bytes file.
-Lampiran hanya dapat ditambahkan ketika laporan DRAFT atau SUBMITTED.
+Lampiran loading hanya dapat ditambahkan ketika DRAFT. Bukti pemeriksaan pada
+verification ditambahkan oleh proses unloading ketika SANDAR.
 
 Contoh upload:
 
@@ -323,13 +479,14 @@ curl http://localhost:5001/api/v1/attachments/ATTACHMENT_ID/file \
 7. PENGUJIAN TAHAP 6
 ======================================================================
 
-Perintah yang dijalankan pada 3 September 2026:
+Perintah yang dijalankan pada 7 September 2026:
 
 1. npx prisma validate
    Hasil: LULUS - schema.prisma valid.
 
-2. npx prisma migrate status
-   Hasil: LULUS - 3 migrasi ditemukan dan database schema up to date.
+2. npx prisma migrate deploy dan npx prisma migrate status
+   Hasil: LULUS - migration master reference diterapkan; 5 migrasi ditemukan
+   dan database schema up to date.
 
 3. npm run typecheck
    Hasil: LULUS - tidak ada error TypeScript.
@@ -337,18 +494,24 @@ Perintah yang dijalankan pada 3 September 2026:
 4. npm run build
    Hasil: LULUS - kompilasi produksi berhasil.
 
-5. npm test
-   Hasil: LULUS - 5 test, 5 lulus, 0 gagal.
+5. npm run prisma:seed (dijalankan dua kali)
+   Hasil: LULUS - kedua eksekusi berhasil; hasil query tetap memuat tepat 6
+   plant, 3 activity, 8 product, 3 UoM, 5 jetty, dan 5 vessel sumber.
+
+6. npm test
+   Hasil: LULUS - 7 test, 7 lulus, 0 gagal.
 
 Cakupan integration test:
 
 - Upload, validasi isi, download, dan hapus lampiran.
 - Autentikasi, authorization, dan CRUD user.
 - CRUD master data dan relasinya.
+- CRUD Plant, Jetty, Activity, Product, Unit of Measure, otorisasi ADMIN,
+  validasi spesifikasi vessel, serta literal MT/OB dan YES/NO.
 - CRUD terminal.
 - Transaksi sealing end-to-end dan audit log.
 
-Waktu integration suite terakhir: sekitar 4,8 detik.
+Waktu integration suite terakhir: sekitar 7,0 detik.
 
 Catatan non-blocking:
 Driver pg menampilkan DeprecationWarning tentang client.query() yang dipanggil
@@ -369,9 +532,9 @@ perlu dipantau saat upgrade pg ke versi mayor berikutnya.
 8. Tambahkan nomor seal.
 9. Upload foto ke laporan atau record.
 10. Ambil metadata dan download foto.
-11. Submit laporan.
-12. Login sebagai ADMIN/SUPERVISOR dan verifikasi seal/laporan.
-13. Approve atau reject laporan.
+11. Loading Master mengubah perjalanan menjadi BERLAYAR.
+12. Unloading Master menerima kapal dan mengubah status menjadi SANDAR.
+13. Periksa seluruh seal lalu ubah perjalanan menjadi FINISH.
 14. Periksa audit log.
 
 9. PERINTAH OPERASIONAL
@@ -386,3 +549,66 @@ npm run prisma:generate     Generate Prisma Client
 npm run prisma:migrate      Membuat/menerapkan migrasi development
 npm run prisma:seed         Menjalankan seed
 npx prisma migrate status   Memeriksa status migrasi
+
+======================================================================
+10. STEP 8 - DOKUMENTASI ATTACHMENT DAN TANDA TANGAN
+======================================================================
+
+Attachment mendukung JPEG, PNG, WebP, dan PDF dengan owner REPORT,
+SECTION, SEALING_RECORD, atau VERIFICATION. Metadata meliputi caption,
+sequence, section A-H, compartment/titik, nama file aman, MIME, ukuran,
+dan checksum SHA-256. Preview menggunakan /attachments/:id/preview dan
+download menggunakan /attachments/:id/download. Endpoint /file tetap
+menjadi alias kompatibilitas untuk preview.
+
+Signature mendukung CHIEF_OFFICER, TERMINAL_REPRESENTATIVE, dan SURVEYOR,
+dengan maksimal satu row per role per laporan. Nama, waktu, user opsional,
+serta file JPEG/PNG/WebP/PDF dapat disimpan. File signature mempunyai
+endpoint /signatures/:id/file, /preview, dan /download.
+
+Dokumentasi dan tanda tangan tetap opsional. Semua mutation ditolak setelah
+laporan FINISH. Upload/delete/penggantian file memakai cleanup atau rollback
+jika transaksi database gagal. Metadata attachment dan signature ikut masuk
+ke finalSnapshot. Detail kontrak ada di API_DOCUMENTATION_SIGNATURE.md.
+
+======================================================================
+11. STEP 9 - GENERATOR XLSX RESMI
+======================================================================
+
+Generator memakai template Form Segel Baru sesuai TKO (edit1).xlsx dengan
+checksum SHA-256 d9a6e738b7551357099f2443207a11396ed2397baf1aeafb1cd4d0c616dae963.
+Template dibaca immutable dan generator menolak file yang checksum-nya berubah.
+
+POST /reports|voyages|shipments/:reportId/xlsx membuat artefak dari finalSnapshot
+laporan FINISH. GET .../xlsx/preview menampilkan inline dan GET .../xlsx/download
+mengunduh file. Hasil menyertakan header shipment, A-H dinamis, nomor segel,
+NOT_APPLICABLE, serta nama/gambar tanda tangan.
+
+Overflow dibuat sebagai worksheet Segel Lanjutan N yang mengklon layout resmi.
+Logo, merge, style, ukuran row/column, margin, orientasi, page break, calc chain,
+dan printer settings dipertahankan. Template sumber tidak mempunyai defined
+print area sehingga generator juga tidak mengarang print area baru.
+
+Konfigurasi path: SEALING_XLSX_TEMPLATE_PATH dan XLSX_EXPORT_DIR. Detail kontrak,
+mapping cell, continuation, authorization, serta error ada di API_XLSX_EXPORT.md.
+
+======================================================================
+12. STEP 10 - GENERATOR PDF DAN APPENDIX DOKUMENTASI
+======================================================================
+
+Generator memakai Form Segel Mengacu B3.1-612 TKO Pengelolaan Segel Rev. 0.pdf
+sebagai background immutable tiga halaman A4. Checksum template adalah
+231031f64a1264c24508552b99466963938cccad64687a7a5400ebd4bbab48e6.
+Nilai akhir ditumpuk dari finalSnapshot menggunakan font PDF standar yang tidak
+bergantung pada instalasi font host.
+
+POST /reports|voyages|shipments/:reportId/pdf membuat dan menyimpan satu
+PdfArtifact per report FINISH. GET .../pdf/preview dan .../pdf/download membaca
+byte-stream yang sama setelah pemeriksaan ukuran dan checksum; generate berulang
+tidak merender ulang. Overflow memakai salinan set tiga halaman resmi.
+
+Foto opsional JPEG/PNG/WebP dari report, section, sealing record, atau verification
+ditambahkan sesudah form sebagai appendix A4 3 x 3, dengan caption dan urutan.
+Dokumen PDF tetap dapat diunduh melalui API attachment dan tidak diperlakukan
+sebagai foto. Detail endpoint, metadata, authorization, dan error tersedia pada
+API_PDF_EXPORT.md.

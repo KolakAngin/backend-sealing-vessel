@@ -27,14 +27,16 @@ export async function getUserController(_request: Request, response: Response): 
   sendSuccess(response, 200, "User berhasil diambil", await authService.getUser(params.id));
 }
 
-export async function createUserController(_request: Request, response: Response): Promise<void> {
+export async function createUserController(request: Request, response: Response): Promise<void> {
   const { body } = getValidatedInput<{ body: CreateUserInput }>(response);
-  sendSuccess(response, 201, "User berhasil dibuat", await authService.createUser(body));
+  if (!request.authUser) throw new AppError(401, "Autentikasi diperlukan");
+  sendSuccess(response, 201, "User berhasil dibuat", await authService.createUser(body, request.authUser.id));
 }
 
-export async function updateUserController(_request: Request, response: Response): Promise<void> {
+export async function updateUserController(request: Request, response: Response): Promise<void> {
   const { params, body } = getValidatedInput<{ params: UserIdParams; body: UpdateUserInput }>(response);
-  sendSuccess(response, 200, "User berhasil diperbarui", await authService.updateUser(params.id, body));
+  if (!request.authUser) throw new AppError(401, "Autentikasi diperlukan");
+  sendSuccess(response, 200, "User berhasil diperbarui", await authService.updateUser(params.id, body, request.authUser.id));
 }
 
 export async function deactivateUserController(request: Request, response: Response): Promise<void> {

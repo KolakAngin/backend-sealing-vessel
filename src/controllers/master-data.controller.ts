@@ -2,15 +2,19 @@ import type { Request, Response } from "express";
 
 import { getValidatedInput } from "../middleware/validate-request.js";
 import type {
-  CreateCategoryInput, CreateCompartmentInput, CreateTemplateInput,
-  CreateVesselInput, CreateVesselPointInput, IdParams,
-  ListCategoriesInput, ListCompartmentsInput, ListTemplatesInput,
-  ListVesselPointsInput, ListVesselsInput, UpdateCategoryInput,
-  UpdateCompartmentInput, UpdateTemplateInput, UpdateVesselInput,
-  UpdateVesselPointInput,
+  CreateActivityInput, CreateCategoryInput, CreateCompartmentInput,
+  CreateJettyInput, CreatePlantInput, CreateProductInput, CreateTemplateInput,
+  CreateUnitOfMeasureInput, CreateVesselInput, CreateVesselPointInput, IdParams,
+  ListActivitiesInput, ListCategoriesInput, ListCompartmentsInput,
+  ListJettiesInput, ListPlantsInput, ListProductsInput, ListTemplatesInput,
+  ListUnitsOfMeasureInput, ListVesselPointsInput, ListVesselsInput,
+  UpdateActivityInput, UpdateCategoryInput, UpdateCompartmentInput,
+  UpdateJettyInput, UpdatePlantInput, UpdateProductInput, UpdateTemplateInput,
+  UpdateUnitOfMeasureInput, UpdateVesselInput, UpdateVesselPointInput,
 } from "../schemas/master-data.schema.js";
 import * as service from "../services/master-data.service.js";
 import { sendSuccess } from "../utils/api-response.js";
+import { AppError } from "../utils/app-error.js";
 
 type ListResult = { items: unknown[]; pagination: Record<string, number> };
 
@@ -29,26 +33,61 @@ function detailController(operation: (id: string) => Promise<unknown>, message: 
   };
 }
 
-function createController<I>(operation: (input: I) => Promise<unknown>, message: string) {
-  return async (_request: Request, response: Response): Promise<void> => {
+function actorId(request: Request): string {
+  if (!request.authUser) throw new AppError(401, "Autentikasi diperlukan");
+  return request.authUser.id;
+}
+
+function createController<I>(operation: (input: I, actorId: string) => Promise<unknown>, message: string) {
+  return async (request: Request, response: Response): Promise<void> => {
     const { body } = getValidatedInput<{ body: I }>(response);
-    sendSuccess(response, 201, message, await operation(body));
+    sendSuccess(response, 201, message, await operation(body, actorId(request)));
   };
 }
 
-function updateController<I>(operation: (id: string, input: I) => Promise<unknown>, message: string) {
-  return async (_request: Request, response: Response): Promise<void> => {
+function updateController<I>(operation: (id: string, input: I, actorId: string) => Promise<unknown>, message: string) {
+  return async (request: Request, response: Response): Promise<void> => {
     const { params, body } = getValidatedInput<{ params: IdParams; body: I }>(response);
-    sendSuccess(response, 200, message, await operation(params.id, body));
+    sendSuccess(response, 200, message, await operation(params.id, body, actorId(request)));
   };
 }
 
-function deleteController(operation: (id: string) => Promise<unknown>, message: string) {
-  return async (_request: Request, response: Response): Promise<void> => {
+function deleteController(operation: (id: string, actorId: string) => Promise<unknown>, message: string) {
+  return async (request: Request, response: Response): Promise<void> => {
     const { params } = getValidatedInput<{ params: IdParams }>(response);
-    sendSuccess(response, 200, message, await operation(params.id));
+    sendSuccess(response, 200, message, await operation(params.id, actorId(request)));
   };
 }
+
+export const listPlantsController = listController<ListPlantsInput>(service.listPlants, "Daftar plant berhasil diambil");
+export const getPlantController = detailController(service.getPlant, "Plant berhasil diambil");
+export const createPlantController = createController<CreatePlantInput>(service.createPlant, "Plant berhasil dibuat");
+export const updatePlantController = updateController<UpdatePlantInput>(service.updatePlant, "Plant berhasil diperbarui");
+export const deletePlantController = deleteController(service.deactivatePlant, "Plant berhasil dinonaktifkan");
+
+export const listJettiesController = listController<ListJettiesInput>(service.listJetties, "Daftar jetty berhasil diambil");
+export const getJettyController = detailController(service.getJetty, "Jetty berhasil diambil");
+export const createJettyController = createController<CreateJettyInput>(service.createJetty, "Jetty berhasil dibuat");
+export const updateJettyController = updateController<UpdateJettyInput>(service.updateJetty, "Jetty berhasil diperbarui");
+export const deleteJettyController = deleteController(service.deactivateJetty, "Jetty berhasil dinonaktifkan");
+
+export const listActivitiesController = listController<ListActivitiesInput>(service.listActivities, "Daftar activity berhasil diambil");
+export const getActivityController = detailController(service.getActivity, "Activity berhasil diambil");
+export const createActivityController = createController<CreateActivityInput>(service.createActivity, "Activity berhasil dibuat");
+export const updateActivityController = updateController<UpdateActivityInput>(service.updateActivity, "Activity berhasil diperbarui");
+export const deleteActivityController = deleteController(service.deactivateActivity, "Activity berhasil dinonaktifkan");
+
+export const listProductsController = listController<ListProductsInput>(service.listProducts, "Daftar product berhasil diambil");
+export const getProductController = detailController(service.getProduct, "Product berhasil diambil");
+export const createProductController = createController<CreateProductInput>(service.createProduct, "Product berhasil dibuat");
+export const updateProductController = updateController<UpdateProductInput>(service.updateProduct, "Product berhasil diperbarui");
+export const deleteProductController = deleteController(service.deactivateProduct, "Product berhasil dinonaktifkan");
+
+export const listUnitsOfMeasureController = listController<ListUnitsOfMeasureInput>(service.listUnitsOfMeasure, "Daftar unit of measure berhasil diambil");
+export const getUnitOfMeasureController = detailController(service.getUnitOfMeasure, "Unit of measure berhasil diambil");
+export const createUnitOfMeasureController = createController<CreateUnitOfMeasureInput>(service.createUnitOfMeasure, "Unit of measure berhasil dibuat");
+export const updateUnitOfMeasureController = updateController<UpdateUnitOfMeasureInput>(service.updateUnitOfMeasure, "Unit of measure berhasil diperbarui");
+export const deleteUnitOfMeasureController = deleteController(service.deactivateUnitOfMeasure, "Unit of measure berhasil dinonaktifkan");
 
 export const listVesselsController = listController<ListVesselsInput>(service.listVessels, "Daftar vessel berhasil diambil");
 export const getVesselController = detailController(service.getVessel, "Vessel berhasil diambil");

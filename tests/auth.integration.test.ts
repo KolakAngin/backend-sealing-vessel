@@ -106,6 +106,14 @@ test("Autentikasi, authorization, dan CRUD User", async () => {
     assert.equal(deactivated.response.status, 200);
     assert.equal(deactivated.body.data.isActive, false);
 
+    const userAudits = await prisma.auditLog.findMany({
+      where: { entityId: viewerId, userId: admin.user.id },
+      select: { action: true, newData: true },
+    });
+    assert.deepEqual(new Set(userAudits.map((entry: { action: string }) => entry.action)), new Set(["CREATE", "UPDATE", "DELETE"]));
+    assert.equal(JSON.stringify(userAudits).includes("passwordHash"), false);
+    assert.equal(JSON.stringify(userAudits).includes(TEST_PASSWORD), false);
+
     const deactivatedToken = await requestJson<unknown>(`${api}/auth/me`, undefined, viewerToken);
     assert.equal(deactivatedToken.response.status, 401);
 
@@ -116,6 +124,7 @@ test("Autentikasi, authorization, dan CRUD User", async () => {
     );
     assert.equal(cannotDeactivateSelf.response.status, 400);
   } finally {
+    await prisma.auditLog.deleteMany({ where: { userId: admin.user.id } });
     if (viewerId) await prisma.user.delete({ where: { id: viewerId } }).catch(() => {});
     await prisma.user.delete({ where: { id: admin.user.id } }).catch(() => {});
     await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
