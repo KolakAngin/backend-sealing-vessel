@@ -1,0 +1,78 @@
+{
+  "fixtureVersion": 1,
+  "templateSha256": "d9a6e738b7551357099f2443207a11396ed2397baf1aeafb1cd4d0c616dae963",
+  "report": {
+    "reportNo": "RPT-QS-GOLDEN",
+    "shipmentNumber": "SHP-QS-2026-001",
+    "voyageNumber": "VOY-QS-2026-01",
+    "vesselName": "OB. QUEEN SOFIA",
+    "activity": "LOADING",
+    "product": "B40",
+    "loadingPlant": "STS TABONEO",
+    "loadingJetty": "MT. GLOBAL TOP",
+    "dischargePlant": "INTEGRATED TERMINAL MAKASSAR",
+    "dischargeJetty": "JETTY 1",
+    "sealingStatus": "COMPLETED",
+    "reportDateTime": "2026-07-28T08:30:00.000Z",
+    "loadingMaster": "Loading Master Queen Sofia"
+  },
+  "compartments": [
+    { "code": "1P", "side": "PORT" },
+    { "code": "2P", "side": "PORT" },
+    { "code": "3P", "side": "PORT" },
+    { "code": "4P", "side": "PORT" },
+    { "code": "5P", "side": "PORT" },
+    { "code": "6P", "side": "PORT" },
+    { "code": "7P", "side": "PORT" },
+    { "code": "Slop Port", "side": "PORT" },
+    { "code": "1S", "side": "STBD" },
+    { "code": "2S", "side": "STBD" },
+    { "code": "3S", "side": "STBD" },
+    { "code": "4S", "side": "STBD" },
+    { "code": "5S", "side": "STBD" },
+    { "code": "6S", "side": "STBD" },
+    { "code": "7S", "side": "STBD" },
+    { "code": "Slop Starboard", "side": "STBD" }
+  ],
+  "sectionATemplates": [
+    "Sounding Hole / Flange Vapor Lock",
+    "Tank Cleaning Access DOT / Deck Seal",
+    "Hatch Coaming / Tank Dome / Manhole",
+    "Sampling Hole / Sighting Hole",
+    "Emergency Connection"
+  ],
+  "equipment": {
+    "B": ["Cargo Manifold Port", "Cargo Manifold Starboard"],
+    "C": ["Fore Peak Tank", "After Peak Tank", "WBT 1P", "WBT 1S"],
+    "D": ["Suction Valve", "Stripping Valve", "Dropline Valve"],
+    "E": ["Tank Cleaning Valve", "COW Valve"],
+    "F": ["Bunker Sounding Hole", "Bunker Deck Seal"],
+    "G": ["Cargo Sea Chest Valve", "Spool Piece Cargo vs Ballast", "Overboard Valve"],
+    "H": ["Sampling Bottle", "Measurement Tool Box", "Pintu Pumproom"]
+  },
+  "expected": {
+    "U9": "OB. QUEEN SOFIA",
+    "U13": "B40",
+    "Y22": "LOADING",
+    "F43": "1P",
+    "Z43": "QS-A-1P-1",
+    "CH43": "QS-A-1P-5",
+    "F67": "Slop Port",
+    "F70": "1S",
+    "F94": "Slop Starboard",
+    "K103": "QS-B-001",
+    "BD124": "QS-C-002",
+    "DI23": "QS-D-001",
+    "DI53": "QS-E-001",
+    "EM68": "QS-F-001",
+    "DZ83": "QS-G-001\nQS-G-001-B",
+    "IW89": "QS-H-001",
+    "GY123": "Chief Officer Queen Sofia\n29 Jul 2026, 08.00"
+  },
+  "structure": {
+    "sheetCount": 1,
+    "mergeCount": 399,
+    "logoPath": "xl/media/image1.png",
+    "printerSettingsPath": "xl/printerSettings/printerSettings1.bin"
+  }
+}
