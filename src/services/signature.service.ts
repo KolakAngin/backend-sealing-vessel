@@ -3,7 +3,7 @@ import { stat } from "node:fs/promises";
 
 import { prisma } from "../config/prisma.js";
 import type { Prisma, ReportStatus, UserRole } from "../generated/prisma/client.js";
-import type { SignatureInput, UpdateSignatureInput } from "../schemas/transaction.schema.js";
+import type { SignatureInput, UpdateSignatureInput, UpsertSignatureInput } from "../schemas/transaction.schema.js";
 import { removeFile, resolveFile, saveFile, stageFileRemoval } from "../storage/local-storage.js";
 import { AppError } from "../utils/app-error.js";
 import { extensionForMimeType, sanitizeUploadedFileName, validateDocumentationFile } from "../utils/uploaded-file.js";
@@ -121,6 +121,50 @@ export async function createSignature(reportId: string, input: SignatureInput, a
     const created = await tx.reportSignature.create({ data, include: signatureInclude });
     await tx.auditLog.create({ data: { userId: actor.id, action: "CREATE", entityType: "REPORT_SIGNATURE", entityId: id, newData: data as Prisma.InputJsonValue } });
     return created;
+  });
+}
+
+export async function upsertSignature(
+  reportId: string,
+  role: SignatureInput["role"],
+  input: UpsertSignatureInput,
+  actor: SignatureActor,
+) {
+  const report = await loadReport(reportId);
+  assertWritable(report, actor);
+  await validateUser(input.userId);
+  return prisma.$transaction(async (rawTransaction) => {
+    const tx = rawTransaction as unknown as SignatureTransactionClient;
+    await lockWritableReport(tx, reportId, actor);
+    const existing = await tx.reportSignature.findUnique({
+      where: { sealingReportId_role: { sealingReportId: reportId, role } },
+    });
+    const data = {
+      name: input.name,
+      ...(input.userId === undefined ? {} : { userId: input.userId }),
+      ...(input.signatureUrl === undefined ? {} : { signatureUrl: input.signatureUrl }),
+      ...(input.signedAt === undefined ? {} : { signedAt: input.signedAt }),
+    };
+    const id = existing?.id ?? randomUUID();
+    const signature = existing
+      ? await tx.reportSignature.update({ where: { id }, data, include: signatureInclude })
+      : await tx.reportSignature.create({
+        data: { id, sealingReportId: reportId, role, ...data },
+        include: signatureInclude,
+      });
+    await tx.auditLog.create({
+      data: {
+        userId: actor.id,
+        action: existing ? "UPDATE" : "CREATE",
+        entityType: "REPORT_SIGNATURE",
+        entityId: id,
+        ...(existing ? {
+          oldData: { userId: existing.userId, name: existing.name, signatureUrl: existing.signatureUrl, signedAt: existing.signedAt },
+        } : {}),
+        newData: { ...data, ...(existing ? {} : { sealingReportId: reportId, role, id }) } as Prisma.InputJsonValue,
+      },
+    });
+    return signature;
   });
 }
 

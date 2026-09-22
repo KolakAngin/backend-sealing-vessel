@@ -100,6 +100,7 @@ transactionRouter.post("/seals/:id/verify", unloaders, validateRequest(schema.ve
 for (const resource of ["reports", "voyages", "shipments"] as const) {
   transactionRouter.get(`/${resource}/:reportId/signatures`, validateRequest(schema.listSignaturesRequest), controller.listSignatures);
   transactionRouter.post(`/${resource}/:reportId/signatures`, signatureWriters, validateRequest(schema.createSignatureRequest), controller.createSignature);
+  transactionRouter.put(`/${resource}/:reportId/signatures/:role`, signatureWriters, validateRequest(schema.upsertSignatureRequest), controller.upsertSignature);
 }
 transactionRouter.get("/signatures/:id", validateRequest(schema.signatureDetailRequest), controller.getSignature);
 transactionRouter.patch("/signatures/:id", signatureWriters, validateRequest(schema.updateSignatureRequest), controller.updateSignature);

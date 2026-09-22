@@ -10,10 +10,10 @@ Konsekuensinya:
 
 - `/shipments` dan `/voyages` adalah dua nama resource canonical untuk record yang sama;
 - `status` adalah lifecycle perjalanan: `DRAFT`, `BERLAYAR`, `SANDAR`, atau `FINISH`;
-- `sealingStatus` adalah status sealing tersendiri dan tidak mengubah `status` perjalanan;
+- `sealingStatus` adalah label sealing tersendiri, opsional pada request dan diisi `READY` oleh server bila tidak dikirim; nilainya tidak mengubah `status` perjalanan;
 - `sealingProcessStatus` adalah status proses internal yang dikelola server; detailnya ada pada [API_SHIPMENT_LIFECYCLE.md](./API_SHIPMENT_LIFECYCLE.md);
 - `reportNo` tetap tersedia sebagai identitas teknis/legacy dan dibuat otomatis untuk shipment baru. Nilainya tidak dianggap sama dengan `voyageNumber` atau `shipmentNumber`;
-- kolom shipment baru nullable pada database hanya agar laporan historis tetap dapat dibaca. Request create canonical tetap mewajibkan seluruh field sumber.
+- kolom shipment baru nullable pada database hanya agar laporan historis tetap dapat dibaca. Request create canonical mewajibkan seluruh field sumber selain `sealingStatus` yang memiliki default server.
 
 ## 2. Relasi Plant–Jetty
 
@@ -76,12 +76,11 @@ Hak akses create/update/delete mengikuti alur existing: `ADMIN`, `SUPERVISOR`, a
   "loadingPlantId": "UUID",
   "loadingJettyId": "UUID",
   "dischargePlantId": "UUID",
-  "dischargeJettyId": "UUID",
-  "sealingStatus": "READY"
+  "dischargeJettyId": "UUID"
 }
 ```
 
-Semua field pada contoh di atas wajib. Field assignment `loadingMasterId` dapat dikirim eksplisit; bila caller adalah Loading Master/Supervisor, nilainya default ke caller. `unloadingMasterId` boleh kosong saat draft tetapi wajib sebelum depart. Field opsional lain: `loadingMasterSurveyorName` dan `remarks`.
+Semua field pada contoh di atas wajib. `sealingStatus` boleh tidak dikirim; server mengisinya dengan `READY` dan mengembalikannya dalam respons. Field assignment `loadingMasterId` dapat dikirim eksplisit; bila caller adalah Loading Master/Supervisor, nilainya default ke caller. `unloadingMasterId` boleh kosong saat draft tetapi wajib sebelum depart. Field opsional lain: `loadingMasterSurveyorName` dan `remarks`.
 
 Aturan bisnis:
 
@@ -91,13 +90,13 @@ Aturan bisnis:
 - kode Activity hanya `LOADING`, `DISCHARGE`, atau `ROB`;
 - loading Jetty harus memiliki assignment ke loading Plant;
 - discharge Jetty harus memiliki assignment ke discharge Plant;
-- `sealingStatus` wajib berupa teks non-kosong maksimal 50 karakter dan dinormalisasi uppercase. Domain nilainya belum ditentukan sumber, sehingga API tidak mengarang enum;
+- bila dikirim, `sealingStatus` harus berupa teks non-kosong maksimal 50 karakter dan dinormalisasi uppercase. Nilai lama selain `READY` tetap diterima karena domain resminya belum ditentukan; frontend dapat menghapus konstanta `READY` dari request. Status proses tetap dibaca dari `status` dan `sealingProcessStatus`;
 - record baru selalu memulai lifecycle perjalanan dengan `status = DRAFT`;
 - create menghasilkan audit `CREATE` entity `SHIPMENT_VOYAGE`.
 
 ### Update
 
-`PATCH` menerima subset field create, tetapi hasil gabungan dengan data tersimpan harus tetap mempunyai semua field shipment wajib. Master yang dirujuk divalidasi ulang dan harus aktif. Vessel tidak dapat diubah setelah sealing record disiapkan. Update menghasilkan audit `UPDATE`.
+`PATCH` menerima subset field create, tetapi hasil gabungan dengan data tersimpan harus tetap mempunyai semua field shipment wajib selain `sealingStatus`. Bila data historis belum mempunyai `sealingStatus`, update mengisinya dengan `READY`. Master yang dirujuk divalidasi ulang dan harus aktif. Vessel tidak dapat diubah setelah sealing record disiapkan. Update menghasilkan audit `UPDATE`.
 
 ### Delete
 

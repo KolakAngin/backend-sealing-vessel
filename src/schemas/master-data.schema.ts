@@ -188,7 +188,7 @@ export const updateTemplateRequest = z.object({ body: updateTemplateBody, params
 export const listTemplatesRequest = z.object({ body: z.unknown(), params: z.object({}), query: listTemplatesQuery });
 export const templateDetailRequest = detailRequest;
 
-export const createVesselPointBody = z.object({
+const vesselPointBody = z.object({
   vesselId: uuid,
   sealingPointTemplateId: uuid,
   compartmentId: uuid.nullable().optional(),
@@ -196,6 +196,8 @@ export const createVesselPointBody = z.object({
   displayName: nullableString(255),
   side: sideSchema.nullable().optional(),
   locationName: nullableString(150),
+  canvasX: z.number().finite().min(0).max(1).nullable().optional(),
+  canvasY: z.number().finite().min(0).max(1).nullable().optional(),
   instanceNo: z.number().int().positive().default(1),
   isRequired: z.boolean().default(true),
   sequence: z.number().int().nonnegative().nullable().optional(),
@@ -203,12 +205,22 @@ export const createVesselPointBody = z.object({
   description: nullableString(2_000),
   isActive: z.boolean().default(true),
 }).strict();
-export const updateVesselPointBody = createVesselPointBody.partial().extend({
+const coordinatesArePaired = (data: { canvasX?: number | null | undefined; canvasY?: number | null | undefined }) =>
+  (data.canvasX === undefined && data.canvasY === undefined) ||
+  (data.canvasX !== undefined && data.canvasY !== undefined &&
+    (data.canvasX === null) === (data.canvasY === null));
+export const createVesselPointBody = vesselPointBody.refine(coordinatesArePaired, {
+  path: ["canvasY"], message: "canvasX dan canvasY harus diisi bersama atau keduanya null",
+});
+export const updateVesselPointBody = vesselPointBody.partial().extend({
   instanceNo: z.number().int().positive().optional(),
   isRequired: z.boolean().optional(),
   availability: availabilitySchema.optional(),
   isActive: z.boolean().optional(),
-}).refine((data) => Object.keys(data).length > 0, "Minimal satu field harus dikirim");
+}).refine((data) => Object.keys(data).length > 0, "Minimal satu field harus dikirim")
+  .refine(coordinatesArePaired, {
+    path: ["canvasY"], message: "canvasX dan canvasY harus diisi bersama atau keduanya null",
+  });
 export const listVesselPointsQuery = pagingQuery.extend({ vesselId: uuid.optional(), sealingPointTemplateId: uuid.optional(), compartmentId: uuid.optional(), side: sideSchema.optional(), availability: availabilitySchema.optional(), sortBy: z.enum(["code", "displayName", "sequence", "createdAt"]).default("sequence") });
 export const createVesselPointRequest = z.object({ body: createVesselPointBody, params: z.object({}), query: emptyQuery });
 export const updateVesselPointRequest = z.object({ body: updateVesselPointBody, params: idParams, query: emptyQuery });

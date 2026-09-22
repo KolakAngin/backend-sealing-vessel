@@ -28,7 +28,7 @@ Alur API yang diaudit menggunakan prefix `/api/v1`; tabel menuliskan path setela
 | Jetty Name Loading Port | Referensi jetty loading | `loadingJettyId` wajib, aktif, dan harus di-assign ke loading Plant | `SealingReport.loadingJettyId` → `Jetty.id`; validasi melalui `PlantJettyAssignment` | Sesuai setelah assignment aktual dikonfigurasi. |
 | Discharge Port | Referensi plant discharge | `dischargePlantId` wajib dan aktif | `SealingReport.dischargePlantId` → `Plant.id` | Sesuai dengan istilah implementasi Plant; Terminal lama tetap terpisah. |
 | Jetty Name Discharge Port | Referensi jetty discharge | `dischargeJettyId` wajib, aktif, dan harus di-assign ke discharge Plant | `SealingReport.dischargeJettyId` → `Jetty.id`; validasi melalui `PlantJettyAssignment` | Sesuai setelah assignment aktual dikonfigurasi. |
-| Status Sealing | Status sealing | `sealingStatus` wajib, non-kosong, maksimal 50 karakter | `SealingReport.sealingStatus` varchar; terpisah dari `status` | Struktur sesuai; domain nilai tetap menunggu sumber dan tidak dijadikan enum tebakan. |
+| Status Sealing | Status sealing | `sealingStatus` opsional; bila dikirim harus non-kosong dan maksimal 50 karakter | `SealingReport.sealingStatus` varchar; terpisah dari `status` | API mengisi `READY` bila tidak dikirim; domain nilai tetap menunggu sumber dan tidak dijadikan enum tebakan. |
 
 Field implementasi tambahan yang tidak muncul pada daftar wajib sumber:
 
@@ -147,7 +147,7 @@ PDF memakai PDF referensi tambahan sebagai sumber geometry tiga halaman. Hal ini
 
 `DRAFT` → `BERLAYAR` → `SANDAR` → `FINISH`.
 
-`SealingReport.status` menyimpan lifecycle tersebut, sedangkan `SealingReport.sealingStatus` menyimpan nilai sumber yang terpisah. STEP 7 menambahkan `sealingProcessStatus` server-managed (`NOT_STARTED`, `IN_PROGRESS`, `READY`, `IN_TRANSIT`, `VERIFICATION`, `FINALIZED`) dan `finalSnapshot`. Domain nilai `sealingStatus` sumber tetap berupa string karena sumber tidak menyediakan enum.
+`SealingReport.status` menyimpan lifecycle tersebut, sedangkan `SealingReport.sealingStatus` menyimpan nilai sumber yang terpisah. Bila request tidak menyertakan `sealingStatus`, API menyimpan `READY`. STEP 7 menambahkan `sealingProcessStatus` server-managed (`NOT_STARTED`, `IN_PROGRESS`, `READY`, `IN_TRANSIT`, `VERIFICATION`, `FINALIZED`) dan `finalSnapshot`. Domain nilai `sealingStatus` sumber tetap berupa string karena sumber tidak menyediakan enum.
 
 Validasi depart hanya mewajibkan nomor segel untuk point snapshot yang tersedia dan `isRequired=true`; point required berstatus `NOT_APPLICABLE`, point opsional, dan section tidak tersedia tidak memblokir. Finalisasi memerlukan verification untuk nomor aktif, tetapi tidak mewajibkan dokumentasi/attachment.
 

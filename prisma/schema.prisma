@@ -590,6 +590,10 @@ model VesselSealingPoint {
   // Cargo Manifold
   locationName String? @db.VarChar(150)
 
+  // Posisi relatif terhadap gambar denah vessel (0..1 dari kiri/atas).
+  canvasX Decimal? @db.Decimal(7, 6)
+  canvasY Decimal? @db.Decimal(7, 6)
+
   // Jika template yang sama mempunyai
   // beberapa instance.
   //

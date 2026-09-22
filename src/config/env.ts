@@ -8,6 +8,7 @@ const envSchema = z.object({
     .enum(["development", "test", "production"])
     .default("development"),
   PORT: z.coerce.number().int().positive().max(65_535).default(5000),
+  CORS_ORIGINS: z.string().default(""),
   JWT_SECRET: z.string().min(32, "JWT_SECRET minimal 32 karakter"),
   JWT_EXPIRES_IN_SECONDS: z.coerce.number().int().positive().default(28_800),
   UPLOAD_DIR: z.string().min(1).default("uploads"),

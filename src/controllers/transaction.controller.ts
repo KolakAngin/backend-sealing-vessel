@@ -1,7 +1,7 @@
 import type { NextFunction, Request, Response } from "express";
 
 import { getValidatedInput } from "../middleware/validate-request.js";
-import type { CreatePlantJettyAssignmentInput, CreateRecordInput, CreateReportInput, CreateSealInput, CreateShipmentInput, FormPointPatchInput, FormPointWriteInput, FormSectionBatchInput, ListAuditsInput, ListPlantJettyAssignmentsInput, ListReportsInput, SignatureInput, UpdateRecordInput, UpdateReportInput, UpdateSealInput, UpdateShipmentInput, UpdateSignatureInput, VerifySealInput } from "../schemas/transaction.schema.js";
+import type { CreatePlantJettyAssignmentInput, CreateRecordInput, CreateReportInput, CreateSealInput, CreateShipmentInput, FormPointPatchInput, FormPointWriteInput, FormSectionBatchInput, ListAuditsInput, ListPlantJettyAssignmentsInput, ListReportsInput, SignatureInput, UpsertSignatureInput, UpdateRecordInput, UpdateReportInput, UpdateSealInput, UpdateShipmentInput, UpdateSignatureInput, VerifySealInput } from "../schemas/transaction.schema.js";
 import * as service from "../services/transaction.service.js";
 import * as signatureService from "../services/signature.service.js";
 import * as xlsxExportService from "../services/xlsx-export.service.js";
@@ -85,6 +85,7 @@ export async function verifySeal(req: Request, res: Response) { const { params, 
 export async function listSignatures(req: Request, res: Response) { const { params } = getValidatedInput<{ params: { reportId: string } }>(res); sendSuccess(res, 200, "Daftar tanda tangan berhasil diambil", await signatureService.listSignatures(params.reportId, actor(req))); }
 export async function getSignature(req: Request, res: Response) { const { params } = getValidatedInput<{ params: { id: string } }>(res); sendSuccess(res, 200, "Tanda tangan berhasil diambil", await signatureService.getSignature(params.id, actor(req))); }
 export async function createSignature(req: Request, res: Response) { const { params, body } = getValidatedInput<{ params: { reportId: string }; body: SignatureInput }>(res); sendSuccess(res, 201, "Tanda tangan berhasil dibuat", await signatureService.createSignature(params.reportId, body, actor(req))); }
+export async function upsertSignature(req: Request, res: Response) { const { params, body } = getValidatedInput<{ params: { reportId: string; role: SignatureInput["role"] }; body: UpsertSignatureInput }>(res); sendSuccess(res, 200, "Tanda tangan berhasil disimpan", await signatureService.upsertSignature(params.reportId, params.role, body, actor(req))); }
 export async function updateSignature(req: Request, res: Response) { const { params, body } = getValidatedInput<{ params: { id: string }; body: UpdateSignatureInput }>(res); sendSuccess(res, 200, "Tanda tangan berhasil diperbarui", await signatureService.updateSignature(params.id, body, actor(req))); }
 export async function uploadSignatureFile(req: Request, res: Response) { const { params } = getValidatedInput<{ params: { id: string } }>(res); sendSuccess(res, 200, "File tanda tangan berhasil disimpan", await signatureService.uploadSignatureFile(params.id, req.file, actor(req))); }
 const sendSignatureFile = (disposition: "inline" | "attachment") => async (req: Request, res: Response, next: NextFunction) => {

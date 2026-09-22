@@ -1,7 +1,7 @@
 import type { Request, Response } from "express";
 
 import { getValidatedInput } from "../middleware/validate-request.js";
-import type { CreateUserInput, ListUsersInput, LoginInput, UpdateUserInput, UserIdParams } from "../schemas/auth.schema.js";
+import type { AssignableUsersInput, CreateUserInput, ListUsersInput, LoginInput, UpdateUserInput, UserIdParams } from "../schemas/auth.schema.js";
 import * as authService from "../services/auth.service.js";
 import { AppError } from "../utils/app-error.js";
 import { sendSuccess } from "../utils/api-response.js";
@@ -20,6 +20,12 @@ export async function listUsersController(_request: Request, response: Response)
   const { query } = getValidatedInput<{ query: ListUsersInput }>(response);
   const result = await authService.listUsers(query);
   sendSuccess(response, 200, "Daftar user berhasil diambil", result.items, result.pagination);
+}
+
+export async function listAssignableUsersController(_request: Request, response: Response): Promise<void> {
+  const { query } = getValidatedInput<{ query: AssignableUsersInput }>(response);
+  const result = await authService.listAssignableUsers(query);
+  sendSuccess(response, 200, "Daftar Unloading Master aktif berhasil diambil", result.items, result.pagination);
 }
 
 export async function getUserController(_request: Request, response: Response): Promise<void> {

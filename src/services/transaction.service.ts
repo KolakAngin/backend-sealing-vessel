@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 
 import { prisma } from "../config/prisma.js";
-import type { AuditAction, Prisma, ReportStatus, SealingProcessStatus, UserRole } from "../generated/prisma/client.js";
+import type { AuditAction, Prisma, ReportStatus, SealCondition, SealingProcessStatus, UserRole } from "../generated/prisma/client.js";
 import type { CreatePlantJettyAssignmentInput, CreateRecordInput, CreateReportInput, CreateSealInput, CreateShipmentInput, FormPointPatchInput, FormPointWriteInput, FormSectionBatchInput, ListAuditsInput, ListPlantJettyAssignmentsInput, ListReportsInput, UpdateRecordInput, UpdateReportInput, UpdateSealInput, UpdateShipmentInput, VerifySealInput } from "../schemas/transaction.schema.js";
 import { AppError } from "../utils/app-error.js";
 
@@ -11,6 +11,7 @@ const pageMeta = (page: number, limit: number, total: number) => ({ page, limit,
 const canManage = (actor: Actor) => actor.role === "ADMIN" || actor.role === "SUPERVISOR";
 const canLoad = (actor: Actor) => canManage(actor) || actor.role === "LOADING_MASTER";
 const canUnload = (actor: Actor) => canManage(actor) || actor.role === "UNLOADING_MASTER";
+const defaultSealingStatus = "READY";
 function withoutUndefined<T extends object>(input: T): { [K in keyof T]-?: Exclude<T[K], undefined> } {
   return Object.fromEntries(Object.entries(input).filter(([, value]) => value !== undefined)) as { [K in keyof T]-?: Exclude<T[K], undefined> };
 }
@@ -34,7 +35,7 @@ function assertUnloadingAssignment(unloadingMasterId: string | null, actor: Acto
 }
 
 const reportInclude = {
-  vessel: { select: { id: true, name: true, imoNumber: true } },
+  vessel: { select: { id: true, name: true, imoNumber: true, drawingFileUrl: true, drawingLink: true } },
   activity: { select: { id: true, code: true, name: true } },
   product: { select: { id: true, name: true } },
   loadingPlant: { select: { id: true, code: true, name: true } },
@@ -84,7 +85,7 @@ export async function listReports(query: ListReportsInput, actor: Actor) {
   };
   const items = await prisma.sealingReport.findMany({ where, include: reportInclude, skip: (query.page - 1) * query.limit, take: query.limit, orderBy: { reportDateTime: query.sortOrder } });
   const total = await prisma.sealingReport.count({ where });
-  return { items, pagination: pageMeta(query.page, query.limit, total) };
+  return { items: items.map(withSnapshotDrawing), pagination: pageMeta(query.page, query.limit, total) };
 }
 
 export async function getReport(id: string, actor?: Actor) {
@@ -92,7 +93,7 @@ export async function getReport(id: string, actor?: Actor) {
   if (!item) throw new AppError(404, "Laporan sealing tidak ditemukan");
   if (actor?.role === "LOADING_MASTER" && (item.loadingMasterId ?? item.createdById) !== actor.id) throw new AppError(403, "Anda tidak berhak melihat perjalanan ini");
   if (actor?.role === "UNLOADING_MASTER" && item.unloadingMasterId !== actor.id) throw new AppError(403, "Anda tidak berhak menerima perjalanan ini");
-  return item;
+  return withSnapshotDrawing(item);
 }
 
 const supportedActivityCodes = ["LOADING", "DISCHARGE", "ROB"] as const;
@@ -191,7 +192,7 @@ export async function createShipment(input: CreateShipmentInput, actor: Actor) {
     loadingJettyId: input.loadingJettyId,
     dischargePlantId: input.dischargePlantId,
     dischargeJettyId: input.dischargeJettyId,
-    sealingStatus: input.sealingStatus.toUpperCase(),
+    sealingStatus: (input.sealingStatus ?? defaultSealingStatus).toUpperCase(),
     loadingMasterId,
     unloadingMasterId: input.unloadingMasterId,
     loadingMasterSurveyorName: input.loadingMasterSurveyorName,
@@ -225,8 +226,7 @@ export async function updateShipment(id: string, input: UpdateShipmentInput, act
   };
   const voyageNumber = input.voyageNumber ?? old.voyageNumber;
   const shipmentNumber = input.shipmentNumber ?? old.shipmentNumber;
-  const sealingStatus = input.sealingStatus ?? old.sealingStatus;
-  if (!references.activityId || !references.productId || !references.loadingPlantId || !references.loadingJettyId || !references.dischargePlantId || !references.dischargeJettyId || !voyageNumber || !shipmentNumber || !sealingStatus) {
+  if (!references.activityId || !references.productId || !references.loadingPlantId || !references.loadingJettyId || !references.dischargePlantId || !references.dischargeJettyId || !voyageNumber || !shipmentNumber) {
     throw new AppError(400, "Laporan historis belum memiliki seluruh field wajib shipment");
   }
   await Promise.all([
@@ -243,6 +243,7 @@ export async function updateShipment(id: string, input: UpdateShipmentInput, act
     ...(input.voyageNumber ? { voyageNumber: input.voyageNumber.toUpperCase() } : {}),
     ...(input.shipmentNumber ? { shipmentNumber: input.shipmentNumber.toUpperCase() } : {}),
     ...(input.sealingStatus ? { sealingStatus: input.sealingStatus.toUpperCase() } : {}),
+    ...(!input.sealingStatus && !old.sealingStatus ? { sealingStatus: defaultSealingStatus } : {}),
   });
   const [updated] = await prisma.$transaction([
     prisma.sealingReport.update({ where: { id }, data, include: reportInclude }),
@@ -381,6 +382,8 @@ type FormSnapshotPoint = {
   displayName: string | null;
   side: string | null;
   locationName: string | null;
+  canvasX?: string | null;
+  canvasY?: string | null;
   instanceNo: number;
   isRequired?: boolean;
   sequence: number | null;
@@ -407,7 +410,7 @@ type FormConfigurationSnapshot = {
   capturedAt: string;
   formVersion: { id: string; code: string; name: string; revision: string | null };
   vesselFormProfile: { id: string; name: string | null };
-  vessel: { id: string; name: string; imoNumber: string | null };
+  vessel: { id: string; name: string; imoNumber: string | null; drawingFileUrl?: string | null; drawingLink?: string | null };
   sections: Array<{ id: string; code: string; name: string; sequence: number; isAvailable: boolean }>;
   compartments: Array<{ id: string; code: string; name: string; side: string | null; sequence: number | null; description: string | null }>;
   points: FormSnapshotPoint[];
@@ -432,6 +435,22 @@ function readFormSnapshot(value: unknown): FormConfigurationSnapshot | null {
   if (candidate.schemaVersion !== 1 || !Array.isArray(candidate.points) || !Array.isArray(candidate.sections) || !Array.isArray(candidate.compartments)) return null;
   if (!candidate.formVersion || !candidate.vesselFormProfile || !candidate.vessel) return null;
   return candidate as FormConfigurationSnapshot;
+}
+
+function withSnapshotDrawing<T extends {
+  formConfigurationSnapshot: unknown;
+  vessel: { drawingFileUrl: string | null; drawingLink: string | null };
+}>(report: T): T {
+  const vessel = readFormSnapshot(report.formConfigurationSnapshot)?.vessel;
+  if (!vessel || (vessel.drawingFileUrl === undefined && vessel.drawingLink === undefined)) return report;
+  return {
+    ...report,
+    vessel: {
+      ...report.vessel,
+      drawingFileUrl: vessel.drawingFileUrl === undefined ? report.vessel.drawingFileUrl : vessel.drawingFileUrl,
+      drawingLink: vessel.drawingLink === undefined ? report.vessel.drawingLink : vessel.drawingLink,
+    },
+  };
 }
 
 function snapshotPointPositionKey(point: FormSnapshotPoint) {
@@ -473,6 +492,12 @@ function assertSnapshotIntegrity(reportVesselId: string, snapshot: FormConfigura
     }
     if (!Number.isInteger(point.instanceNo) || point.instanceNo < 1) {
       throw new AppError(409, `Instance titik ${point.code} tidak valid pada snapshot laporan`);
+    }
+    const coordinateValues = [point.canvasX, point.canvasY];
+    if (coordinateValues.some((value) => value != null) &&
+        (coordinateValues.some((value) => value == null) ||
+          coordinateValues.some((value) => value === "" || !Number.isFinite(Number(value)) || Number(value) < 0 || Number(value) > 1))) {
+      throw new AppError(409, `Koordinat titik ${point.code} tidak valid pada snapshot laporan`);
     }
 
     const positionKey = snapshotPointPositionKey(point);
@@ -572,7 +597,7 @@ export async function prepareReportSeals(reportId: string, actor: Actor) {
     );
     const report = await database.sealingReport.findUnique({
       where: { id: reportId },
-      include: { vessel: { select: { id: true, name: true, imoNumber: true } } },
+      include: { vessel: { select: { id: true, name: true, imoNumber: true, drawingFileUrl: true, drawingLink: true } } },
     });
     if (!report) throw new AppError(404, "Shipment/voyage tidak ditemukan");
     assertLoadingOwner(report.createdById, actor, report.loadingMasterId);
@@ -687,6 +712,8 @@ export async function prepareReportSeals(reportId: string, actor: Actor) {
         displayName: point.displayName,
         side: point.side,
         locationName: point.locationName,
+        canvasX: point.canvasX?.toString() ?? null,
+        canvasY: point.canvasY?.toString() ?? null,
         instanceNo: point.instanceNo,
         isRequired: point.isRequired,
         sequence: point.sequence,
@@ -783,6 +810,19 @@ type FormStoredSeal = {
   notes: string | null;
 };
 
+type FormSealVerification = {
+  id: string;
+  sealId: string;
+  verifiedById: string;
+  condition: SealCondition;
+  verifiedAt: Date;
+  remarks: string | null;
+};
+
+type FormStoredSealWithVerifications = FormStoredSeal & {
+  verifications: FormSealVerification[];
+};
+
 type FormRecordWithSeals = {
   id: string;
   sealingReportId: string;
@@ -794,6 +834,10 @@ type FormRecordWithSeals = {
   createdAt: Date;
   updatedAt: Date;
   seals: FormStoredSeal[];
+};
+
+type FormRecordWithVerifications = Omit<FormRecordWithSeals, "seals"> & {
+  seals: FormStoredSealWithVerifications[];
 };
 
 type LifecycleUser = {
@@ -1326,7 +1370,7 @@ function buildGroupedForm(
     voyageNumber: string | null;
     formInitializedAt: Date | null;
     formConfigurationSnapshot: unknown;
-    sealingRecords: FormRecordWithSeals[];
+    sealingRecords: FormRecordWithVerifications[];
   },
   snapshot: FormConfigurationSnapshot,
   actor: Actor,
@@ -1354,7 +1398,7 @@ function buildGroupedForm(
           instance: number;
           required: boolean;
           template: FormSnapshotPoint["template"];
-          point: Pick<FormSnapshotPoint, "code" | "displayName" | "locationName" | "sequence">;
+          point: Pick<FormSnapshotPoint, "code" | "displayName" | "locationName" | "sequence" | "canvasX" | "canvasY">;
           status: FormPointWriteInput["status"];
           notes: string | null;
           seals: Array<{
@@ -1364,6 +1408,7 @@ function buildGroupedForm(
             installedAt: Date;
             removedAt: Date | null;
             notes: string | null;
+            verifications: FormSealVerification[];
           }>;
         }>;
       }>();
@@ -1401,6 +1446,8 @@ function buildGroupedForm(
             displayName: point.displayName,
             locationName: point.locationName,
             sequence: point.sequence,
+            canvasX: point.canvasX ?? null,
+            canvasY: point.canvasY ?? null,
           },
           status: record?.status ?? "NOT_SEALED",
           notes: record?.notes ?? null,
@@ -1413,6 +1460,7 @@ function buildGroupedForm(
               installedAt: seal.installedAt,
               removedAt: seal.removedAt,
               notes: seal.notes,
+              verifications: seal.verifications,
             })),
         });
         rows.set(rowKey, row);
@@ -1468,7 +1516,10 @@ export async function getReportFormStructure(reportId: string, actor: Actor) {
       voyageNumber: true,
       formInitializedAt: true,
       formConfigurationSnapshot: true,
-      sealingRecords: { include: { seals: true } },
+      sealingRecords: { include: { seals: { include: { verifications: {
+        select: { id: true, sealId: true, verifiedById: true, condition: true, verifiedAt: true, remarks: true },
+        orderBy: [{ verifiedAt: "asc" }, { id: "asc" }],
+      } } } } },
     },
   });
   if (!report) throw new AppError(404, "Shipment/voyage tidak ditemukan");

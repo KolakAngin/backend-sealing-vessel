@@ -24,7 +24,7 @@ export const shipmentBody = z.object({
   loadingJettyId: uuid,
   dischargePlantId: uuid,
   dischargeJettyId: uuid,
-  sealingStatus: z.string().trim().min(1).max(50),
+  sealingStatus: z.string().trim().min(1).max(50).optional(),
   loadingMasterId: uuid.optional(),
   unloadingMasterId: uuid.nullable().optional(),
   loadingMasterSurveyorName: nullableText(150),
@@ -132,8 +132,10 @@ export const replaceSealRequest = z.object({ body: createSealBody, params: z.obj
 export const verifySealRequest = z.object({ body: z.object({ condition: z.enum(["GOOD", "DAMAGED", "BROKEN", "MISSING", "OTHER"]), verifiedAt: z.coerce.date().optional(), remarks: nullableText(2_000) }).strict(), params: z.object({ id: uuid }), query: z.object({}) });
 
 export const signatureBody = z.object({ userId: uuid.nullable().optional(), role: z.enum(["CHIEF_OFFICER", "TERMINAL_REPRESENTATIVE", "SURVEYOR"]), name: z.string().trim().min(1).max(150), signatureUrl: nullableText(2_000), signedAt: z.coerce.date().nullable().optional() }).strict();
+export const upsertSignatureBody = signatureBody.omit({ role: true });
 export const updateSignatureBody = signatureBody.omit({ role: true }).partial().refine((v) => Object.keys(v).length > 0, "Minimal satu field harus dikirim");
 export const createSignatureRequest = z.object({ body: signatureBody, params: z.object({ reportId: uuid }), query: z.object({}) });
+export const upsertSignatureRequest = z.object({ body: upsertSignatureBody, params: z.object({ reportId: uuid, role: signatureBody.shape.role }), query: z.object({}) });
 export const listSignaturesRequest = z.object({ body: z.unknown(), params: z.object({ reportId: uuid }), query: z.object({}) });
 export const updateSignatureRequest = z.object({ body: updateSignatureBody, params: z.object({ id: uuid }), query: z.object({}) });
 export const signatureDetailRequest = detail;
@@ -147,4 +149,4 @@ export type CreatePlantJettyAssignmentInput = z.infer<typeof createPlantJettyAss
 export type CreateRecordInput = z.infer<typeof createRecordBody>; export type UpdateRecordInput = z.infer<typeof updateRecordBody>;
 export type CreateSealInput = z.infer<typeof createSealBody>; export type UpdateSealInput = z.infer<typeof updateSealBody>; export type VerifySealInput = z.infer<typeof verifySealRequest>["body"];
 export type FormPointWriteInput = z.infer<typeof formPointWriteBody>; export type FormPointPatchInput = z.infer<typeof formPointPatchBody>; export type FormSectionBatchInput = z.infer<typeof formSectionBatchBody>;
-export type SignatureInput = z.infer<typeof signatureBody>; export type UpdateSignatureInput = z.infer<typeof updateSignatureBody>; export type ListAuditsInput = z.infer<typeof listAuditsQuery>;
+export type SignatureInput = z.infer<typeof signatureBody>; export type UpsertSignatureInput = z.infer<typeof upsertSignatureBody>; export type UpdateSignatureInput = z.infer<typeof updateSignatureBody>; export type ListAuditsInput = z.infer<typeof listAuditsQuery>;

@@ -4,6 +4,7 @@ import { prisma } from "../config/prisma.js";
 import type { AuditAction, Prisma } from "../generated/prisma/client.js";
 import type {
   CreateUserInput,
+  AssignableUsersInput,
   ListUsersInput,
   LoginInput,
   UpdateUserInput,
@@ -84,6 +85,28 @@ export async function listUsers(query: ListUsersInput) {
     orderBy: { [query.sortBy]: query.sortOrder },
   });
   const total = await prisma.user.count({ where });
+  return { items, pagination: { page: query.page, limit: query.limit, total, totalPages: Math.ceil(total / query.limit) } };
+}
+
+export async function listAssignableUsers(query: AssignableUsersInput) {
+  const where: Prisma.UserWhereInput = {
+    role: "UNLOADING_MASTER",
+    isActive: true,
+    ...(query.search ? { OR: [
+      { username: { contains: query.search, mode: "insensitive" } },
+      { fullName: { contains: query.search, mode: "insensitive" } },
+    ] } : {}),
+  };
+  const [items, total] = await prisma.$transaction([
+    prisma.user.findMany({
+      where,
+      select: { id: true, username: true, fullName: true, role: true },
+      skip: (query.page - 1) * query.limit,
+      take: query.limit,
+      orderBy: [{ fullName: "asc" }, { id: "asc" }],
+    }),
+    prisma.user.count({ where }),
+  ]);
   return { items, pagination: { page: query.page, limit: query.limit, total, totalPages: Math.ceil(total / query.limit) } };
 }
 

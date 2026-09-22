@@ -221,11 +221,11 @@ Perubahan backend STEP 4:
 - `SealingReport` tetap menjadi aggregate tunggal bagi Shipment, Voyage, dan laporan sealing agar seluruh laporan, record, attachment, signature, lifecycle, serta ID historis tidak dipindahkan atau dihapus;
 - field additive `activityId`, `voyageNumber`, `shipmentNumber`, `productId`, loading/discharge Plant dan Jetty, serta `sealingStatus` ditambahkan;
 - `shipmentNumber` unik dan dinormalisasi uppercase oleh API;
-- create canonical `/shipments` dan `/voyages` mewajibkan seluruh sebelas field sheet pertama;
+- create canonical `/shipments` dan `/voyages` mewajibkan sepuluh field identitas dan referensi; `sealingStatus` opsional dengan default server `READY`;
 - Activity wajib aktif dan berkode `LOADING`, `DISCHARGE`, atau `ROB`; Vessel, Product, Plant, dan Jetty juga wajib aktif;
 - `PlantJettyAssignment` many-to-many ditambahkan agar pasangan loading/discharge dapat divalidasi tanpa mengarang relasi dari workbook;
 - migration tidak membuat assignment apa pun dan membuat kolom baru nullable hanya untuk menjaga laporan historis;
-- `sealingStatus` terpisah dari `ReportStatus` perjalanan. Karena domain sumber belum tersedia, nilainya string wajib tervalidasi, bukan enum tebakan;
+- `sealingStatus` terpisah dari `ReportStatus` perjalanan. Karena domain sumber belum tersedia, nilainya tetap string tervalidasi bila dikirim, bukan enum tebakan;
 - create, update, dan delete shipment serta create/delete assignment menghasilkan audit log;
 - `/reports` dipertahankan sebagai endpoint legacy, sedangkan kontrak baru didokumentasikan pada [API_SHIPMENT_VOYAGE.md](./API_SHIPMENT_VOYAGE.md).
 
@@ -497,3 +497,46 @@ Inventaris rinci dan matriks role tersedia di [API_ENDPOINTS_FINAL.md](./API_END
 - audit: `/api/v1/audit-logs`.
 
 Pemeriksaan route tidak menemukan endpoint backend yang belum tercantum pada inventaris final. Folder `front-end-kapal` tidak diubah pada STEP 11. Seluruh perubahan working tree yang sudah ada dipertahankan; tidak ada reset, revert, atau penghapusan data/source file.
+
+## 18. STEP 12 — fondasi integrasi frontend dengan kontrak backend final
+
+Status: **STEP_12_FRONTEND_FOUNDATION_COMPLETE** pada 9 September 2026 (Asia/Jakarta). Status backend tetap **BACKEND_CLEAR**; tidak ada source code, schema, migration, route, service, controller, atau test backend yang diubah pada STEP 12.
+
+Fondasi frontend yang diselesaikan:
+
+- API client memakai proxy `/api/backend`, Bearer token, parsing envelope sukses/gagal backend, detail validasi Zod, klasifikasi error 401/403/409, abort signal, pagination seluruh halaman, dan response blob beserta filename/checksum;
+- endpoint constants memakai `/shipments` sebagai resource canonical untuk lifecycle, form A–H, attachment, signature, XLSX, dan PDF; alias `/voyages`, `/reports`, serta `/attachments/:id/file` tidak dipakai oleh fondasi baru;
+- TypeScript types mencakup auth, seluruh master referensi, vessel/compartment/titik aktual, shipment, status perjalanan/proses sealing, snapshot form A–H, multi-seal, attachment, dan signature;
+- state autentikasi terpusat memulihkan sesi melalui `/auth/me`, menyimpan/membersihkan Bearer token, merespons 401 secara global, dan dipakai oleh shell aplikasi;
+- role helpers mengikuti release gate: hanya `ADMIN` mengubah master, `SUPERVISOR` dapat membaca audit dan mengelola transaksi, sedangkan Loading/Unloading Master dibatasi assignment;
+- reusable `MasterSelect` memuat seluruh halaman master aktif dengan loading, abort, dan error state; dynamic form memakai komponen ini untuk field master berbasis endpoint;
+- helper file mendukung owner report/section/record/verification, multipart upload JPEG/PNG/WebP/PDF, download/preview blob, filename, dan checksum;
+- model form A–H mempertahankan urutan section/row/column, side, instance, required, compartment nullable, beberapa titik dalam satu compartment, dan beberapa nomor segel pada satu titik;
+- helper validasi payload menerapkan kombinasi `SEALED`, `NOT_SEALED`, `NOT_APPLICABLE`, normalisasi nomor, serta deteksi duplikasi per titik;
+- semua resource master pada konfigurasi frontend diselaraskan sehingga mutasi hanya ditawarkan kepada `ADMIN`;
+- dashboard membaca endpoint canonical `/shipments` dan tidak lagi menyatakan satu segel per compartment.
+
+Kontrak UI transaksi lama dihentikan: `VoyageWorkspace` tidak lagi diimpor, dirender, atau tersedia pada navigasi aplikasi. File lama dipertahankan sebagai artefak historis karena folder frontend tidak mempunyai repository Git, tetapi tidak berada pada import graph aplikasi. Halaman Shipment dan halaman input form A–H belum dibuat, sesuai batas STEP 12.
+
+File fondasi utama:
+
+- `front-end-kapal/lib/api.ts`;
+- `front-end-kapal/lib/api/endpoints.ts`;
+- `front-end-kapal/lib/api/types.ts`;
+- `front-end-kapal/lib/api/files.ts`;
+- `front-end-kapal/lib/auth-state.ts`;
+- `front-end-kapal/lib/roles.ts`;
+- `front-end-kapal/lib/form-a-h.ts`;
+- `front-end-kapal/hooks/use-auth.ts`;
+- `front-end-kapal/components/master-select.tsx`.
+
+Hasil quality gate frontend:
+
+| Pemeriksaan | Hasil |
+|---|---|
+| `npm run lint` | Lulus, 0 error |
+| `npm run typecheck` | Lulus, 0 error |
+| `npm test` | Lulus: 7 test file, 20 test, 0 gagal |
+| `npm run build` | Lulus: client, server, RSC, dan SSR berhasil dibangun |
+
+Build hanya menampilkan peringatan deprecation `module.register()` dari toolchain Vinext/Node dan pemberitahuan bahwa klasifikasi route proxy dinamis belum dapat ditentukan secara statis. Keduanya tidak menyebabkan kegagalan build dan tidak berasal dari kontrak aplikasi.

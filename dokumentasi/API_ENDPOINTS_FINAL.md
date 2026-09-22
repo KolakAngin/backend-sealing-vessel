@@ -2,6 +2,11 @@
 
 Release gate: 8 September 2026. Semua path transaksi di bawah memakai prefix `/api/v1`. Selain health dan login, endpoint memerlukan Bearer token.
 
+Untuk Flutter Web, set `CORS_ORIGINS` sebagai daftar origin yang dipisahkan koma (contoh:
+`http://localhost:8080,https://sboard.example.com`). Hanya origin pada daftar yang menerima
+header CORS. Nilai `*` dan URL dengan path tidak diterima. Bila variabel belum diatur, tidak ada
+origin browser yang diizinkan. Preflight `OPTIONS` dijawab sebelum autentikasi.
+
 ## Matriks role
 
 | Kode | Role |
@@ -29,6 +34,8 @@ Mutasi semua master, user, Terminal legacy, assignment Plant–Jetty, dan konfig
 | Method | Path | Akses |
 |---|---|---|
 | GET, POST | `/users` | A |
+| GET | `/users?role=UNLOADING_MASTER&isActive=true&sortBy=fullName&sortOrder=asc` | LM, S (lookup terbatas) |
+| GET | `/users/assignable?role=UNLOADING_MASTER&search=...` | A, S, LM |
 | GET, PATCH, DELETE | `/users/:id` | A |
 | GET | `/terminals`, `/terminals/:id` | AUTH |
 | POST | `/terminals` | A |
@@ -51,6 +58,15 @@ Mutasi semua master, user, Terminal legacy, assignment Plant–Jetty, dan konfig
 | GET | `/plant-jetty-assignments` | AUTH |
 | POST | `/plant-jetty-assignments` | A |
 | DELETE | `/plant-jetty-assignments/:id` | A |
+
+Lookup `/users/assignable` hanya mengembalikan user aktif ber-role `UNLOADING_MASTER` dengan field
+`id`, `username`, `fullName`, dan `role`. `role=UNLOADING_MASTER` wajib; `search` opsional
+(mencari pada username/nama, tanpa membedakan huruf besar dan kecil). Paginasi memakai `page`
+dan `limit` (maksimum 100) serta `meta` seperti daftar lain. Daftar user lengkap tetap khusus ADMIN.
+
+Kompatibilitas Flutter: `GET /users?role=UNLOADING_MASTER&isActive=true&sortBy=fullName&sortOrder=asc`
+dapat dipakai `LOADING_MASTER` dan `SUPERVISOR`. Response hanya berisi empat field lookup di atas,
+termasuk bila dipaginasi dengan `page`/`limit`. Pola `/users` lainnya tetap khusus ADMIN.
 
 ## Vessel dan konfigurasi A–H
 
@@ -129,9 +145,18 @@ Owner lain dan file:
 | Method | Path | Akses |
 |---|---|---|
 | GET, POST | `/{resource}/:reportId/signatures` | GET AUTH; POST A/S/LM/UM sesuai assignment, `{resource}` = reports/voyages/shipments |
+| PUT | `/{resource}/:reportId/signatures/:role` | A/S/LM/UM sesuai assignment; buat atau perbarui satu slot role, respons 200 |
 | GET, PATCH, DELETE | `/signatures/:id` | GET AUTH; mutasi A/S/LM/UM sesuai assignment |
 | PUT | `/signatures/:id/file` | A/S/LM/UM sesuai assignment |
 | GET | `/signatures/:id/preview`, `/signatures/:id/download` | AUTH; assignment berlaku |
+
+`PUT /shipments/:id/signatures/CHIEF_OFFICER` menerima JSON seperti
+`{"name":"Budi","signedAt":"2026-09-20T03:10:00.000Z"}`. Role yang tersedia:
+`CHIEF_OFFICER`, `TERMINAL_REPRESENTATIVE`, dan `SURVEYOR`. `name` wajib;
+`userId`, `signedAt`, dan `signatureUrl` opsional. Jika slot role sudah ada,
+`id` dan metadata file tetap dipertahankan, sedangkan field yang dikirim diperbarui.
+Unggah file tetap melalui `PUT /signatures/:id/file` menggunakan `id` dari respons.
+Laporan `FINISH` tetap terkunci.
 
 ## XLSX, PDF, dan audit
 
