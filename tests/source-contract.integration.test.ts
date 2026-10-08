@@ -35,7 +35,7 @@ test("release gate sumber: seluruh master workbook dan taxonomy A-H canonical te
     assert.equal(byCode.get("H-03")?.name, "Pintu Pumproom");
     assert.ok(templates.every((template: TemplateRow) => template.isActive));
 
-    type VesselRow = { name: string; vesselType: string };
+    type VesselRow = { name: string; vesselType: string|null };
     const sourceVessels = new Map<string, VesselRow>(vessels.map((vessel: VesselRow) => [vessel.name, vessel]));
     assert.deepEqual(
       ["MT IHSAN 2", "MT IHSAN 3", "MT IHSAN 5"].map((name) => sourceVessels.get(name)?.vesselType),

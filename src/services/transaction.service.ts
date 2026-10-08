@@ -230,7 +230,15 @@ export async function updateShipment(id: string, input: UpdateShipmentInput, act
     throw new AppError(400, "Laporan historis belum memiliki seluruh field wajib shipment");
   }
   await Promise.all([
-    validateShipmentReferences(references as Required<typeof references>),
+  validateShipmentReferences({
+    vesselId: references.vesselId,
+    activityId: references.activityId,
+    productId: references.productId,
+    loadingPlantId: references.loadingPlantId,
+    loadingJettyId: references.loadingJettyId,
+    dischargePlantId: references.dischargePlantId,
+    dischargeJettyId: references.dischargeJettyId,
+  }),
     ...(input.loadingMasterId ? [validateLoadingMaster(input.loadingMasterId)] : []),
     validateUnloadingMaster(input.unloadingMasterId),
   ]);
@@ -1322,7 +1330,14 @@ export async function transitionReport(
       status: rule.to,
       sealingProcessStatus: rule.processStatus,
       [rule.timestamp]: transitionAt,
-      ...(transition === "finish" ? { finalizedById: actor.id, finalSnapshot } : {}),
+      ...(transition === "finish"
+    ? {
+        finalizedBy: {
+          connect: { id: actor.id },
+        },
+        ...(finalSnapshot !== undefined ? { finalSnapshot } : {}),
+      }
+    : {}),
       ...(remarks === undefined ? {} : { remarks }),
     };
     const updated = await tx.sealingReport.update({ where: { id }, data, include: reportInclude });
