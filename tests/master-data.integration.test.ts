@@ -50,6 +50,7 @@ test("CRUD master data dan relasinya", async () => {
       name: `Vessel Test ${suffix}`,
       imoNumber: `IMO-${suffix}`,
       vesselType: "TANKER",
+      compartments: [{ code: "INIT", name: "Initial Compartment", sequence: 99 }],
     }));
     assert.equal(vessel.response.status, 201);
     vesselId = vessel.body.data.id;
@@ -142,7 +143,17 @@ test("CRUD master data dan relasinya", async () => {
       assert.equal(removed.response.status, 200);
       assert.equal(removed.body.data.isActive, false);
     }
+
+    for (const entityId of [vesselId, compartmentId, categoryId, templateId, vesselPointId]) {
+      assert.ok(entityId);
+      const actions = await prisma.auditLog.findMany({
+        where: { entityId, userId: identity.user.id },
+        select: { action: true },
+      });
+      assert.deepEqual(new Set(actions.map((entry: { action: string }) => entry.action)), new Set(["CREATE", "UPDATE", "DELETE"]));
+    }
   } finally {
+    await prisma.auditLog.deleteMany({ where: { userId: identity.user.id } });
     if (vesselPointId) await prisma.vesselSealingPoint.delete({ where: { id: vesselPointId } }).catch(() => {});
     if (compartmentId) await prisma.compartment.delete({ where: { id: compartmentId } }).catch(() => {});
     if (templateId) await prisma.sealingPointTemplate.delete({ where: { id: templateId } }).catch(() => {});

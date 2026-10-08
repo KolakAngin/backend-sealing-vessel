@@ -133,7 +133,7 @@ const sealingPointTemplates = [
   {
     categoryCode: "A",
     code: "A-02",
-    name: "Tank Cleaning Access",
+    name: "Tank Cleaning Access DOT/Deck Seal",
     requiresCompartment: true,
     supportsSide: false,
     sequence: 2,
@@ -142,9 +142,10 @@ const sealingPointTemplates = [
     categoryCode: "A",
     code: "A-03",
     name: "COT/Deck Seal",
+    description: "Template legacy sebelum kolom gabungan A-02 diselaraskan dengan XLSX utama.",
     requiresCompartment: true,
     supportsSide: false,
-    sequence: 3,
+    sequence: 99,
   },
   {
     categoryCode: "A",
@@ -152,7 +153,7 @@ const sealingPointTemplates = [
     name: "Hatch Coaming/Tank Dom/Closed Cade/Manhole",
     requiresCompartment: true,
     supportsSide: false,
-    sequence: 4,
+    sequence: 3,
   },
   {
     categoryCode: "A",
@@ -160,7 +161,7 @@ const sealingPointTemplates = [
     name: "Sampling Hole/Sighting Hole/Small Manhole",
     requiresCompartment: true,
     supportsSide: false,
-    sequence: 5,
+    sequence: 4,
   },
   {
     categoryCode: "A",
@@ -168,7 +169,7 @@ const sealingPointTemplates = [
     name: "Emergency Connection (Framo Pump)",
     requiresCompartment: true,
     supportsSide: false,
-    sequence: 6,
+    sequence: 5,
   },
 
   // KATEGORI B
@@ -186,9 +187,42 @@ const sealingPointTemplates = [
     categoryCode: "C",
     code: "C-01",
     name: "Permanent Means Access (FPT/APT/WBT)",
+    description: "Template legacy generik; dipertahankan untuk konfigurasi dan laporan lama.",
     requiresCompartment: false,
     supportsSide: true,
+    sequence: 99,
+  },
+  {
+    categoryCode: "C",
+    code: "C-02",
+    name: "Fore Peak Tank",
+    requiresCompartment: false,
+    supportsSide: false,
     sequence: 1,
+  },
+  {
+    categoryCode: "C",
+    code: "C-03",
+    name: "After Peak Tank",
+    requiresCompartment: false,
+    supportsSide: false,
+    sequence: 2,
+  },
+  {
+    categoryCode: "C",
+    code: "C-04",
+    name: "Water Ballast Tank (P)",
+    requiresCompartment: false,
+    supportsSide: true,
+    sequence: 3,
+  },
+  {
+    categoryCode: "C",
+    code: "C-05",
+    name: "Water Ballast Tank (S)",
+    requiresCompartment: false,
+    supportsSide: true,
+    sequence: 4,
   },
 
   // KATEGORI D
@@ -196,9 +230,10 @@ const sealingPointTemplates = [
     categoryCode: "D",
     code: "D-01",
     name: "Suction/Stripping/Drop/Gate and Drain Manifold",
+    description: "Template legacy berkelompok; dipertahankan untuk konfigurasi dan laporan lama.",
     requiresCompartment: false,
     supportsSide: false,
-    sequence: 1,
+    sequence: 99,
   },
   {
     categoryCode: "D",
@@ -206,7 +241,39 @@ const sealingPointTemplates = [
     name: "Cross Over/By Pass Valve",
     requiresCompartment: false,
     supportsSide: false,
+    sequence: 4,
+  },
+  {
+    categoryCode: "D",
+    code: "D-03",
+    name: "Suction",
+    requiresCompartment: false,
+    supportsSide: false,
+    sequence: 1,
+  },
+  {
+    categoryCode: "D",
+    code: "D-04",
+    name: "Stripping",
+    requiresCompartment: false,
+    supportsSide: false,
     sequence: 2,
+  },
+  {
+    categoryCode: "D",
+    code: "D-05",
+    name: "Dropline",
+    requiresCompartment: false,
+    supportsSide: false,
+    sequence: 3,
+  },
+  {
+    categoryCode: "D",
+    code: "D-06",
+    name: "Gate & Drain Manifold",
+    requiresCompartment: false,
+    supportsSide: false,
+    sequence: 5,
   },
 
   // KATEGORI E
@@ -382,7 +449,7 @@ const sealingPointTemplates = [
   {
     categoryCode: "H",
     code: "H-03",
-    name: "Wilden Pump",
+    name: "Pintu Pumproom",
     requiresCompartment: false,
     supportsSide: false,
     sequence: 3,
@@ -397,9 +464,129 @@ const sealingPointTemplates = [
   },
 ] as const;
 
+const currentFormVersion = {
+  code: "FORM-SEGEL-TKO-EDIT1",
+  name: "Form Segel Baru sesuai TKO (edit1)",
+  revision: "edit1",
+  description:
+    "Versi snapshot konfigurasi berdasarkan sumber utama Form Segel Baru sesuai TKO (edit1).xlsx.",
+} as const;
+
+// ======================================================
+// MASTER SHEET `acuan seed`
+// ======================================================
+
+const plants = [
+  { code: "1401", name: "IT Balikpapan", sequence: 1 },
+  { code: "1402", name: "FT Samarinda", sequence: 2 },
+  { code: "1403", name: "FT Tarakan", sequence: 3 },
+  { code: "1404", name: "IT Banjarmasin", sequence: 4 },
+  { code: "2503", name: "DM LPG Banjarmasin", sequence: 5 },
+  { code: "1S45", name: "STS Taboneo", sequence: 6 },
+] as const;
+
+const activities = ["LOADING", "DISCHARGE", "ROB"].map((code, index) => ({
+  code,
+  name: code,
+  sequence: index + 1,
+}));
+
+const products = [
+  "PERTALITE",
+  "PERTAMAX",
+  "PERTAMAX TURBO",
+  "BIOSOLAR B40",
+  "PERTADEX",
+  "DEXLITE",
+  "LPG",
+  "MFO",
+].map((name, index) => ({ name, sequence: index + 1 }));
+
+// UoM disimpan sebagai master mandiri. Workbook tidak menyatakan relasi tetap
+// Product-UoM, sehingga seed tidak membuat relasi yang bersifat spekulatif.
+const unitsOfMeasure = ["KL", "MT", "BBRL"].map((code, index) => ({
+  code,
+  sequence: index + 1,
+}));
+
+const jetties = ["JETTY 1", "JETTY 2", "JETTY 3", "MT GLOBAL", "MT XXXX"]
+  .map((name, index) => ({ name, sequence: index + 1 }));
+
+const sourceVessels = [
+  { name: "MT IHSAN 2", vesselType: "MT", productGroup: "LPG", owner: "PT Agrabudi Gas Utama", tankCount: 2, drawingStatus: "YES" },
+  { name: "MT IHSAN 3", vesselType: "MT", productGroup: "LPG", owner: "PT Agrabudi Gas Utama", tankCount: 2, drawingStatus: "NO" },
+  { name: "MT IHSAN 5", vesselType: "MT", productGroup: "LPG", owner: "PT Agrabudi Gas Utama", tankCount: 2, drawingStatus: "YES" },
+  { name: "OB Ratu Maryam", vesselType: "OB", productGroup: "BBM", owner: "PT Barokah Gemilang Perkasa", tankCount: 7, drawingStatus: "YES" },
+  { name: "OB XXXXX", vesselType: "OB", productGroup: "AVTUR", owner: "PT Barokah Gemilang Perkasa", tankCount: 7, drawingStatus: "YES" },
+] as const;
+
 // ======================================================
 // FUNGSI SEED
 // ======================================================
+
+async function seedWorkbookMasters() {
+  for (const plant of plants) {
+    await prisma.plant.upsert({
+      where: { code: plant.code },
+      update: { name: plant.name, sequence: plant.sequence, isActive: true },
+      create: { ...plant, isActive: true },
+    });
+  }
+
+  for (const activity of activities) {
+    await prisma.activity.upsert({
+      where: { code: activity.code },
+      update: { name: activity.name, sequence: activity.sequence, isActive: true },
+      create: { ...activity, isActive: true },
+    });
+  }
+
+  for (const product of products) {
+    await prisma.product.upsert({
+      where: { name: product.name },
+      update: { sequence: product.sequence, isActive: true },
+      create: { ...product, isActive: true },
+    });
+  }
+
+  for (const unit of unitsOfMeasure) {
+    await prisma.unitOfMeasure.upsert({
+      where: { code: unit.code },
+      update: { sequence: unit.sequence, isActive: true },
+      create: { ...unit, isActive: true },
+    });
+  }
+
+  for (const jetty of jetties) {
+    await prisma.jetty.upsert({
+      where: { name: jetty.name },
+      update: { sequence: jetty.sequence, isActive: true },
+      create: { ...jetty, isActive: true },
+    });
+  }
+
+  for (const vessel of sourceVessels) {
+    const existingVessel = await prisma.vessel.findFirst({
+      where: { name: { equals: vessel.name, mode: "insensitive" } },
+      orderBy: { createdAt: "asc" },
+    });
+    const knownSourceValues = {
+      name: vessel.name,
+      vesselType: vessel.vesselType,
+      productGroup: vessel.productGroup,
+      owner: vessel.owner,
+      tankCount: vessel.tankCount,
+      drawingStatus: vessel.drawingStatus,
+      isActive: true,
+    };
+
+    if (existingVessel) {
+      await prisma.vessel.update({ where: { id: existingVessel.id }, data: knownSourceValues });
+    } else {
+      await prisma.vessel.create({ data: knownSourceValues });
+    }
+  }
+}
 
 async function seedCategories() {
   const categoryIds = new Map<string, string>();
@@ -467,6 +654,67 @@ async function seedTemplates(categoryIds: Map<string, string>) {
         isActive: true,
       },
     });
+  }
+}
+
+async function seedVesselFormProfiles() {
+  const formVersion = await prisma.formTkoVersion.upsert({
+    where: { code: currentFormVersion.code },
+    update: { ...currentFormVersion, isActive: true },
+    create: { ...currentFormVersion, isActive: true },
+  });
+  const categories = await prisma.sealingCategory.findMany({
+    where: { code: { in: ["A", "B", "C", "D", "E", "F", "G", "H"] } },
+    orderBy: { sequence: "asc" },
+  });
+  const vessels = await prisma.vessel.findMany({ select: { id: true, name: true } });
+
+  for (const vessel of vessels) {
+    const profile = await prisma.vesselFormProfile.upsert({
+      where: {
+        vesselId_formVersionId: {
+          vesselId: vessel.id,
+          formVersionId: formVersion.id,
+        },
+      },
+      update: { isActive: true },
+      create: {
+        vesselId: vessel.id,
+        formVersionId: formVersion.id,
+        name: `Profil aktual ${vessel.name}`,
+        isActive: true,
+        activatedAt: new Date(),
+      },
+    });
+
+    for (const category of categories) {
+      const availablePointCount = await prisma.vesselSealingPoint.count({
+        where: {
+          vesselId: vessel.id,
+          isActive: true,
+          availability: "AVAILABLE",
+          sealingPointTemplate: { categoryId: category.id, isActive: true },
+        },
+      });
+      await prisma.vesselFormSection.upsert({
+        where: {
+          vesselFormProfileId_categoryId: {
+            vesselFormProfileId: profile.id,
+            categoryId: category.id,
+          },
+        },
+        update: {
+          isAvailable: category.isActive && availablePointCount > 0,
+          sequence: category.sequence,
+        },
+        create: {
+          vesselFormProfileId: profile.id,
+          categoryId: category.id,
+          isAvailable: category.isActive && availablePointCount > 0,
+          sequence: category.sequence,
+        },
+      });
+    }
   }
 }
 
@@ -545,6 +793,21 @@ async function seedCompartments(vesselId: string) {
     ];
   }).flat();
 
+  compartments.push(
+    {
+      code: "SLOP-P",
+      name: "Slop Port",
+      side: "PORT" as const,
+      sequence: 15,
+    },
+    {
+      code: "SLOP-S",
+      name: "Slop Starboard",
+      side: "STBD" as const,
+      sequence: 16,
+    },
+  );
+
   for (const compartment of compartments) {
     await prisma.compartment.upsert({
       where: {
@@ -585,6 +848,10 @@ async function main() {
 
   console.log("Template titik sealing berhasil dibuat.");
 
+  await seedWorkbookMasters();
+
+  console.log("Master sheet acuan seed berhasil dibuat/diperbarui.");
+
   const terminal = await seedTerminal();
 
   console.log(`Terminal berhasil dibuat: ${terminal.name}`);
@@ -596,6 +863,10 @@ async function main() {
   await seedCompartments(vessel.id);
 
   console.log("Compartment vessel berhasil dibuat.");
+
+  await seedVesselFormProfiles();
+
+  console.log("Versi form TKO dan profile vessel berhasil dibuat/diperbarui.");
   console.log("Seluruh seed master berhasil dijalankan.");
 }
 

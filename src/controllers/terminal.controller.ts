@@ -14,6 +14,7 @@ import {
   updateTerminal,
 } from "../services/terminal.service.js";
 import { sendSuccess } from "../utils/api-response.js";
+import { AppError } from "../utils/app-error.js";
 import { getValidatedInput } from "../middleware/validate-request.js";
 
 export async function listTerminalsController(
@@ -43,34 +44,37 @@ export async function getTerminalController(
 }
 
 export async function createTerminalController(
-  _request: Request,
+  request: Request,
   response: Response,
 ): Promise<void> {
   const { body } = getValidatedInput<{ body: CreateTerminalInput }>(response);
-  const terminal = await createTerminal(body);
+  if (!request.authUser) throw new AppError(401, "Autentikasi diperlukan");
+  const terminal = await createTerminal(body, request.authUser.id);
 
   sendSuccess(response, 201, "Terminal berhasil dibuat", terminal);
 }
 
 export async function updateTerminalController(
-  _request: Request,
+  request: Request,
   response: Response,
 ): Promise<void> {
   const { params, body } = getValidatedInput<{
     params: TerminalIdParams;
     body: UpdateTerminalInput;
   }>(response);
-  const terminal = await updateTerminal(params.id, body);
+  if (!request.authUser) throw new AppError(401, "Autentikasi diperlukan");
+  const terminal = await updateTerminal(params.id, body, request.authUser.id);
 
   sendSuccess(response, 200, "Terminal berhasil diperbarui", terminal);
 }
 
 export async function deactivateTerminalController(
-  _request: Request,
+  request: Request,
   response: Response,
 ): Promise<void> {
   const { params } = getValidatedInput<{ params: TerminalIdParams }>(response);
-  const terminal = await deactivateTerminal(params.id);
+  if (!request.authUser) throw new AppError(401, "Autentikasi diperlukan");
+  const terminal = await deactivateTerminal(params.id, request.authUser.id);
 
   sendSuccess(response, 200, "Terminal berhasil dinonaktifkan", terminal);
 }

@@ -19,7 +19,8 @@ datasource db {
 enum UserRole {
   ADMIN
   SUPERVISOR
-  OPERATOR
+  LOADING_MASTER
+  UNLOADING_MASTER
   VIEWER
 }
 
@@ -28,6 +29,13 @@ enum VesselType {
   BARGE
   SPOB
   OTHER
+  MT
+  OB
+}
+
+enum DrawingStatus {
+  YES
+  NO
 }
 
 enum Side {
@@ -49,10 +57,18 @@ enum OperationType {
 
 enum ReportStatus {
   DRAFT
-  SUBMITTED
-  VERIFIED
-  APPROVED
-  REJECTED
+  BERLAYAR
+  SANDAR
+  FINISH
+}
+
+enum SealingProcessStatus {
+  NOT_STARTED
+  IN_PROGRESS
+  READY
+  IN_TRANSIT
+  VERIFICATION
+  FINALIZED
 }
 
 enum SealingRecordStatus {
@@ -83,6 +99,13 @@ enum AttachmentType {
   OTHER
 }
 
+enum AttachmentOwnerType {
+  REPORT
+  SECTION
+  SEALING_RECORD
+  VERIFICATION
+}
+
 enum SignatureRole {
   CHIEF_OFFICER
   TERMINAL_REPRESENTATIVE
@@ -100,6 +123,135 @@ enum AuditAction {
   INSTALL_SEAL
   REMOVE_SEAL
   REPLACE_SEAL
+  DEPART
+  ARRIVE
+  FINISH
+  FINALIZE
+}
+
+// ======================================================
+// REFERENCE MASTER DATA
+//
+// Plant dan Jetty direlasikan melalui assignment eksplisit.
+// Migration tidak mengisi pasangan karena workbook sumber
+// tidak menyatakan relasinya.
+// Product dan UnitOfMeasure juga berdiri sendiri karena
+// workbook belum memastikan UoM sebagai atribut produk.
+// ======================================================
+
+model Plant {
+  id String @id @default(uuid()) @db.Uuid
+
+  code String @unique @db.VarChar(20)
+  name String @db.VarChar(150)
+
+  sequence Int?
+  isActive Boolean @default(true)
+
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @db.Timestamptz(3)
+
+  jettyAssignments PlantJettyAssignment[]
+  loadingReports   SealingReport[]        @relation("LoadingPlant")
+  dischargeReports SealingReport[]        @relation("DischargePlant")
+
+  @@index([name])
+  @@index([sequence])
+  @@index([isActive])
+  @@map("m_plant")
+}
+
+model Jetty {
+  id String @id @default(uuid()) @db.Uuid
+
+  name String @unique @db.VarChar(150)
+
+  sequence Int?
+  isActive Boolean @default(true)
+
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @db.Timestamptz(3)
+
+  plantAssignments PlantJettyAssignment[]
+  loadingReports   SealingReport[]        @relation("LoadingJetty")
+  dischargeReports SealingReport[]        @relation("DischargeJetty")
+
+  @@index([sequence])
+  @@index([isActive])
+  @@map("m_jetty")
+}
+
+// Relasi ini sengaja berupa assignment many-to-many. Workbook hanya memberi
+// daftar Plant dan Jetty terpisah, sehingga migration tidak menebak pasangan.
+model PlantJettyAssignment {
+  id String @id @default(uuid()) @db.Uuid
+
+  plantId String @db.Uuid
+  jettyId String @db.Uuid
+
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+
+  plant Plant @relation(fields: [plantId], references: [id], onDelete: Restrict)
+  jetty Jetty @relation(fields: [jettyId], references: [id], onDelete: Restrict)
+
+  @@unique([plantId, jettyId])
+  @@index([plantId])
+  @@index([jettyId])
+  @@map("plant_jetty_assignment")
+}
+
+model Activity {
+  id String @id @default(uuid()) @db.Uuid
+
+  code String @unique @db.VarChar(50)
+  name String @db.VarChar(100)
+
+  sequence Int?
+  isActive Boolean @default(true)
+
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @db.Timestamptz(3)
+
+  sealingReports SealingReport[]
+
+  @@index([name])
+  @@index([sequence])
+  @@index([isActive])
+  @@map("m_activity")
+}
+
+model Product {
+  id String @id @default(uuid()) @db.Uuid
+
+  name String @unique @db.VarChar(150)
+
+  sequence Int?
+  isActive Boolean @default(true)
+
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @db.Timestamptz(3)
+
+  sealingReports SealingReport[]
+
+  @@index([sequence])
+  @@index([isActive])
+  @@map("m_product")
+}
+
+model UnitOfMeasure {
+  id String @id @default(uuid()) @db.Uuid
+
+  code String @unique @db.VarChar(20)
+
+  sequence Int?
+  isActive Boolean @default(true)
+
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @db.Timestamptz(3)
+
+  @@index([sequence])
+  @@index([isActive])
+  @@map("m_unit_of_measure")
 }
 
 // ======================================================
@@ -113,18 +265,22 @@ model User {
   fullName     String  @db.VarChar(100)
   email        String? @unique @db.VarChar(100)
 
-  role     UserRole @default(OPERATOR)
+  role     UserRole @default(LOADING_MASTER)
   isActive Boolean  @default(true)
 
   createdAt DateTime @default(now()) @db.Timestamptz(3)
   updatedAt DateTime @updatedAt @db.Timestamptz(3)
 
-  createdReports SealingReport[]
-  createdRecords SealingRecord[]
-  verifications  SealVerification[]
-  uploadedFiles  Attachment[]
-  signatures     ReportSignature[]
-  auditLogs      AuditLog[]
+  createdReports        SealingReport[]    @relation("LoadingMaster")
+  loadingAssignments    SealingReport[]    @relation("AssignedLoadingMaster")
+  unloadingAssignments  SealingReport[]    @relation("UnloadingMaster")
+  finalizedReports      SealingReport[]    @relation("FinalizedBy")
+  createdRecords        SealingRecord[]
+  verifications         SealVerification[]
+  uploadedFiles         Attachment[]
+  signatures            ReportSignature[]
+  generatedPdfArtifacts PdfArtifact[]
+  auditLogs             AuditLog[]
 
   @@index([role])
   @@index([isActive])
@@ -149,7 +305,8 @@ model Terminal {
   createdAt DateTime @default(now()) @db.Timestamptz(3)
   updatedAt DateTime @updatedAt @db.Timestamptz(3)
 
-  sealingReports SealingReport[]
+  originReports      SealingReport[] @relation("OriginTerminal")
+  destinationReports SealingReport[] @relation("DestinationTerminal")
 
   @@index([name])
   @@index([isActive])
@@ -166,9 +323,18 @@ model Vessel {
   name      String  @db.VarChar(150)
   imoNumber String? @unique @db.VarChar(20)
 
-  vesselType VesselType?
-  owner      String?     @db.VarChar(150)
-  flag       String?     @db.VarChar(100)
+  vesselType   VesselType?
+  productGroup String?     @db.VarChar(100)
+  owner        String?     @db.VarChar(150)
+  flag         String?     @db.VarChar(100)
+
+  deadweightTonnage Decimal? @db.Decimal(18, 3)
+  capacity          Decimal? @db.Decimal(18, 3)
+  tankCount         Int?
+
+  drawingStatus  DrawingStatus?
+  drawingFileUrl String?        @db.Text
+  drawingLink    String?        @db.Text
 
   isActive Boolean @default(true)
 
@@ -178,8 +344,11 @@ model Vessel {
   compartments   Compartment[]
   sealingPoints  VesselSealingPoint[]
   sealingReports SealingReport[]
+  formProfiles   VesselFormProfile[]
 
   @@index([name])
+  @@index([vesselType])
+  @@index([productGroup])
   @@index([isActive])
   @@map("m_vessel")
 }
@@ -220,6 +389,7 @@ model Compartment {
   vessel Vessel @relation(fields: [vesselId], references: [id], onDelete: Cascade)
 
   sealingPoints VesselSealingPoint[]
+  attachments   Attachment[]
 
   @@unique([vesselId, code])
   @@index([vesselId])
@@ -249,10 +419,77 @@ model SealingCategory {
   updatedAt DateTime @updatedAt @db.Timestamptz(3)
 
   sealingPointTemplates SealingPointTemplate[]
+  formSections          VesselFormSection[]
 
   @@index([sequence])
   @@index([isActive])
   @@map("sealing_category")
+}
+
+// ======================================================
+// FORM TKO VERSION DAN PROFILE VESSEL
+// ======================================================
+
+model FormTkoVersion {
+  id String @id @default(uuid()) @db.Uuid
+
+  code        String  @unique @db.VarChar(50)
+  name        String  @db.VarChar(255)
+  revision    String? @db.VarChar(50)
+  description String? @db.Text
+  isActive    Boolean @default(true)
+
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @db.Timestamptz(3)
+
+  vesselProfiles VesselFormProfile[]
+  sealingReports SealingReport[]
+
+  @@index([isActive])
+  @@map("form_tko_version")
+}
+
+model VesselFormProfile {
+  id String @id @default(uuid()) @db.Uuid
+
+  vesselId      String    @db.Uuid
+  formVersionId String    @db.Uuid
+  name          String?   @db.VarChar(150)
+  isActive      Boolean   @default(true)
+  activatedAt   DateTime? @db.Timestamptz(3)
+
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @db.Timestamptz(3)
+
+  vessel      Vessel              @relation(fields: [vesselId], references: [id], onDelete: Cascade)
+  formVersion FormTkoVersion      @relation(fields: [formVersionId], references: [id], onDelete: Restrict)
+  sections    VesselFormSection[]
+  reports     SealingReport[]
+
+  @@unique([vesselId, formVersionId])
+  @@index([vesselId, isActive])
+  @@index([formVersionId])
+  @@map("vessel_form_profile")
+}
+
+model VesselFormSection {
+  id String @id @default(uuid()) @db.Uuid
+
+  vesselFormProfileId String  @db.Uuid
+  categoryId          String  @db.Uuid
+  isAvailable         Boolean @default(true)
+  sequence            Int
+
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @db.Timestamptz(3)
+
+  vesselFormProfile VesselFormProfile @relation(fields: [vesselFormProfileId], references: [id], onDelete: Cascade)
+  category          SealingCategory   @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+
+  @@unique([vesselFormProfileId, categoryId])
+  @@index([vesselFormProfileId, isAvailable])
+  @@index([categoryId])
+  @@map("vessel_form_section")
 }
 
 // ======================================================
@@ -353,6 +590,10 @@ model VesselSealingPoint {
   // Cargo Manifold
   locationName String? @db.VarChar(150)
 
+  // Posisi relatif terhadap gambar denah vessel (0..1 dari kiri/atas).
+  canvasX Decimal? @db.Decimal(7, 6)
+  canvasY Decimal? @db.Decimal(7, 6)
+
   // Jika template yang sama mempunyai
   // beberapa instance.
   //
@@ -360,6 +601,10 @@ model VesselSealingPoint {
   // Sampling Bottle 1
   // Sampling Bottle 2
   instanceNo Int @default(1)
+
+  // Menentukan apakah titik AVAILABLE wajib selesai sebelum keberangkatan.
+  // Default true mempertahankan perilaku data konfigurasi yang sudah ada.
+  isRequired Boolean @default(true)
 
   sequence Int?
 
@@ -379,6 +624,7 @@ model VesselSealingPoint {
   compartment Compartment? @relation(fields: [compartmentId], references: [id], onDelete: SetNull)
 
   sealingRecords SealingRecord[]
+  attachments    Attachment[]
 
   @@unique([vesselId, code])
   @@index([vesselId])
@@ -386,6 +632,7 @@ model VesselSealingPoint {
   @@index([compartmentId])
   @@index([side])
   @@index([vesselId, availability])
+  @@index([vesselId, isRequired])
   @@index([vesselId, sealingPointTemplateId])
   @@map("vessel_sealing_point")
 }
@@ -401,13 +648,36 @@ model SealingReport {
 
   reportNo String @unique @db.VarChar(50)
 
-  vesselId    String @db.Uuid
-  terminalId  String @db.Uuid
-  createdById String @db.Uuid
+  vesselId              String  @db.Uuid
+  originTerminalId      String? @map("terminalId") @db.Uuid
+  destinationTerminalId String? @db.Uuid
+  createdById           String  @db.Uuid
+  loadingMasterId       String? @db.Uuid
+  unloadingMasterId     String? @db.Uuid
+  finalizedById         String? @db.Uuid
+
+  // Field shipment/voyage wajib untuk record baru. Nullable pada database
+  // hanya untuk mempertahankan laporan historis sebelum migration STEP 4.
+  activityId           String?              @db.Uuid
+  voyageNumber         String?              @db.VarChar(50)
+  shipmentNumber       String?              @unique @db.VarChar(50)
+  productId            String?              @db.Uuid
+  loadingPlantId       String?              @db.Uuid
+  loadingJettyId       String?              @db.Uuid
+  dischargePlantId     String?              @db.Uuid
+  dischargeJettyId     String?              @db.Uuid
+  sealingStatus        String?              @db.VarChar(50)
+  sealingProcessStatus SealingProcessStatus @default(NOT_STARTED)
+
+  formVersionId             String?   @db.Uuid
+  vesselFormProfileId       String?   @db.Uuid
+  formConfigurationSnapshot Json?
+  formInitializedAt         DateTime? @db.Timestamptz(3)
+  finalSnapshot             Json?
 
   cargo String? @db.VarChar(150)
 
-  operationType OperationType
+  operationType OperationType?
 
   reportDateTime DateTime @db.Timestamptz(3)
 
@@ -419,6 +689,10 @@ model SealingReport {
 
   status ReportStatus @default(DRAFT)
 
+  departedAt DateTime? @db.Timestamptz(3)
+  arrivedAt  DateTime? @db.Timestamptz(3)
+  finishedAt DateTime? @db.Timestamptz(3)
+
   remarks String? @db.Text
 
   createdAt DateTime @default(now()) @db.Timestamptz(3)
@@ -426,17 +700,51 @@ model SealingReport {
 
   vessel Vessel @relation(fields: [vesselId], references: [id], onDelete: Restrict)
 
-  terminal Terminal @relation(fields: [terminalId], references: [id], onDelete: Restrict)
+  originTerminal Terminal? @relation("OriginTerminal", fields: [originTerminalId], references: [id], onDelete: Restrict)
 
-  createdBy User @relation(fields: [createdById], references: [id], onDelete: Restrict)
+  destinationTerminal Terminal? @relation("DestinationTerminal", fields: [destinationTerminalId], references: [id], onDelete: Restrict)
+
+  createdBy User @relation("LoadingMaster", fields: [createdById], references: [id], onDelete: Restrict)
+
+  loadingMaster User? @relation("AssignedLoadingMaster", fields: [loadingMasterId], references: [id], onDelete: Restrict)
+
+  unloadingMaster User? @relation("UnloadingMaster", fields: [unloadingMasterId], references: [id], onDelete: Restrict)
+
+  finalizedBy User? @relation("FinalizedBy", fields: [finalizedById], references: [id], onDelete: Restrict)
+
+  activity          Activity?          @relation(fields: [activityId], references: [id], onDelete: Restrict)
+  product           Product?           @relation(fields: [productId], references: [id], onDelete: Restrict)
+  loadingPlant      Plant?             @relation("LoadingPlant", fields: [loadingPlantId], references: [id], onDelete: Restrict)
+  loadingJetty      Jetty?             @relation("LoadingJetty", fields: [loadingJettyId], references: [id], onDelete: Restrict)
+  dischargePlant    Plant?             @relation("DischargePlant", fields: [dischargePlantId], references: [id], onDelete: Restrict)
+  dischargeJetty    Jetty?             @relation("DischargeJetty", fields: [dischargeJettyId], references: [id], onDelete: Restrict)
+  formVersion       FormTkoVersion?    @relation(fields: [formVersionId], references: [id], onDelete: Restrict)
+  vesselFormProfile VesselFormProfile? @relation(fields: [vesselFormProfileId], references: [id], onDelete: Restrict)
 
   sealingRecords SealingRecord[]
   signatures     ReportSignature[]
   attachments    Attachment[]
+  pdfArtifact    PdfArtifact?
 
   @@index([vesselId])
-  @@index([terminalId])
+  @@index([originTerminalId])
+  @@index([destinationTerminalId])
   @@index([createdById])
+  @@index([loadingMasterId])
+  @@index([unloadingMasterId])
+  @@index([finalizedById])
+  @@index([activityId])
+  @@index([voyageNumber])
+  @@index([productId])
+  @@index([loadingPlantId])
+  @@index([loadingJettyId])
+  @@index([dischargePlantId])
+  @@index([dischargeJettyId])
+  @@index([sealingStatus])
+  @@index([sealingProcessStatus])
+  @@index([formVersionId])
+  @@index([vesselFormProfileId])
+  @@index([formInitializedAt])
   @@index([reportDateTime])
   @@index([status])
   @@index([vesselId, reportDateTime])
@@ -463,9 +771,13 @@ model SealingRecord {
   vesselSealingPointId String @db.Uuid
   createdById          String @db.Uuid
 
-  status SealingRecordStatus @default(SEALED)
+  status SealingRecordStatus @default(NOT_SEALED)
 
   notes String? @db.Text
+
+  // Snapshot immutable titik/template/section/compartment saat form laporan
+  // diinisialisasi. Null dipertahankan untuk record legacy.
+  pointSnapshot Json?
 
   createdAt DateTime @default(now()) @db.Timestamptz(3)
   updatedAt DateTime @updatedAt @db.Timestamptz(3)
@@ -575,13 +887,20 @@ model SealVerification {
 model Attachment {
   id String @id @default(uuid()) @db.Uuid
 
-  sealingReportId String? @db.Uuid
-  sealingRecordId String? @db.Uuid
-  verificationId  String? @db.Uuid
+  sealingReportId      String? @db.Uuid
+  sealingRecordId      String? @db.Uuid
+  verificationId       String? @db.Uuid
+  compartmentId        String? @db.Uuid
+  vesselSealingPointId String? @db.Uuid
 
   uploadedById String @db.Uuid
 
-  type AttachmentType @default(PHOTO)
+  ownerType AttachmentOwnerType @default(REPORT)
+  type      AttachmentType      @default(PHOTO)
+
+  // A-H. Wajib untuk owner SECTION dan boleh digunakan sebagai konteks
+  // attachment report/record/verification.
+  sectionCode String? @db.VarChar(1)
 
   fileName String @db.VarChar(255)
   fileUrl  String @db.Text
@@ -590,6 +909,12 @@ model Attachment {
 
   fileSize BigInt?
 
+  // SHA-256 hex dari isi file untuk integritas dan audit metadata.
+  checksumSha256 String? @db.VarChar(64)
+
+  caption String? @db.Text
+
+  // Legacy alias yang tetap dipertahankan agar data/API lama tidak hilang.
   description String? @db.Text
 
   // Urutan foto saat ditampilkan
@@ -597,6 +922,7 @@ model Attachment {
   sequence Int?
 
   createdAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @db.Timestamptz(3)
 
   sealingReport SealingReport? @relation(fields: [sealingReportId], references: [id], onDelete: Cascade)
 
@@ -604,15 +930,25 @@ model Attachment {
 
   verification SealVerification? @relation(fields: [verificationId], references: [id], onDelete: Cascade)
 
+  compartment Compartment? @relation(fields: [compartmentId], references: [id], onDelete: SetNull)
+
+  vesselSealingPoint VesselSealingPoint? @relation(fields: [vesselSealingPointId], references: [id], onDelete: SetNull)
+
   uploadedBy User @relation(fields: [uploadedById], references: [id], onDelete: Restrict)
 
   @@index([sealingReportId])
   @@index([sealingRecordId])
   @@index([verificationId])
+  @@index([compartmentId])
+  @@index([vesselSealingPointId])
   @@index([uploadedById])
+  @@index([ownerType])
   @@index([type])
+  @@index([sectionCode])
   @@index([sealingReportId, sequence])
   @@index([sealingRecordId, sequence])
+  @@index([verificationId, sequence])
+  @@index([sealingReportId, sectionCode, sequence])
   @@map("attachment")
 }
 
@@ -643,6 +979,11 @@ model ReportSignature {
   // Optional.
   signatureUrl String? @db.Text
 
+  signatureFileName       String? @db.VarChar(255)
+  signatureMimeType       String? @db.VarChar(100)
+  signatureFileSize       BigInt?
+  signatureChecksumSha256 String? @db.VarChar(64)
+
   signedAt DateTime? @db.Timestamptz(3)
 
   createdAt DateTime @default(now()) @db.Timestamptz(3)
@@ -654,7 +995,46 @@ model ReportSignature {
 
   @@unique([sealingReportId, role])
   @@index([userId])
+  @@index([sealingReportId, signedAt])
   @@map("report_signature")
+}
+
+// ======================================================
+// PDF ARTIFACT
+//
+// Salinan final immutable dari finalSnapshot. Satu laporan
+// hanya mempunyai satu byte-stream resmi agar unduhan ulang
+// tidak menghasilkan checksum yang berbeda.
+// ======================================================
+
+model PdfArtifact {
+  id String @id @default(uuid()) @db.Uuid
+
+  sealingReportId String @unique @db.Uuid
+  generatedById   String @db.Uuid
+
+  fileName   String @db.VarChar(255)
+  storageKey String @unique @db.Text
+  mimeType   String @default("application/pdf") @db.VarChar(100)
+  fileSize   BigInt
+
+  checksumSha256         String @db.VarChar(64)
+  templateChecksumSha256 String @db.VarChar(64)
+  snapshotChecksumSha256 String @db.VarChar(64)
+  rendererVersion        String @db.VarChar(50)
+
+  formPageCount     Int
+  appendixPageCount Int
+  pageCount         Int
+  generatedAt       DateTime @default(now()) @db.Timestamptz(3)
+
+  sealingReport SealingReport @relation(fields: [sealingReportId], references: [id], onDelete: Cascade)
+  generatedBy   User          @relation(fields: [generatedById], references: [id], onDelete: Restrict)
+
+  @@index([generatedById])
+  @@index([checksumSha256])
+  @@index([generatedAt])
+  @@map("pdf_artifact")
 }
 
 // ======================================================

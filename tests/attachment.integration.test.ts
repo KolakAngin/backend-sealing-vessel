@@ -14,10 +14,11 @@ test("Upload, validasi isi, unduh, dan hapus lampiran", async () => {
   const server = app.listen(0, "127.0.0.1");
   await new Promise<void>((resolve) => server.once("listening", resolve));
   const api = `http://127.0.0.1:${(server.address() as AddressInfo).port}/api/v1`;
-  const operator = await createTestIdentity("OPERATOR");
+  const operator = await createTestIdentity("LOADING_MASTER");
   const suffix = randomUUID().replaceAll("-", "").slice(0, 8).toUpperCase();
   let vesselId = "";
   let terminalId = "";
+  let destinationTerminalId = "";
   let reportId = "";
   let attachmentId = "";
 
@@ -26,7 +27,9 @@ test("Upload, validasi isi, unduh, dan hapus lampiran", async () => {
     vesselId = vessel.id;
     const terminal = await prisma.terminal.create({ data: { code: `AT${suffix}`.slice(0, 20), name: `ATT Terminal ${suffix}` } });
     terminalId = terminal.id;
-    const report = await prisma.sealingReport.create({ data: { reportNo: `ATT-${suffix}`, vesselId, terminalId, createdById: operator.user.id, operationType: "LOADING", reportDateTime: new Date() } });
+    const destination = await prisma.terminal.create({ data: { code: `AD${suffix}`.slice(0, 20), name: `ATT Destination ${suffix}` } });
+    destinationTerminalId = destination.id;
+    const report = await prisma.sealingReport.create({ data: { reportNo: `ATT-${suffix}`, vesselId, originTerminalId: terminalId, destinationTerminalId, createdById: operator.user.id, operationType: "LOADING", reportDateTime: new Date() } });
     reportId = report.id;
 
     const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00]);
@@ -65,6 +68,7 @@ test("Upload, validasi isi, unduh, dan hapus lampiran", async () => {
     await prisma.auditLog.deleteMany({ where: { userId: operator.user.id } });
     if (reportId) await prisma.sealingReport.delete({ where: { id: reportId } }).catch(() => {});
     if (terminalId) await prisma.terminal.delete({ where: { id: terminalId } }).catch(() => {});
+    if (destinationTerminalId) await prisma.terminal.delete({ where: { id: destinationTerminalId } }).catch(() => {});
     if (vesselId) await prisma.vessel.delete({ where: { id: vesselId } }).catch(() => {});
     await prisma.user.delete({ where: { id: operator.user.id } }).catch(() => {});
     await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));

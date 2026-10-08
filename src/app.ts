@@ -1,5 +1,7 @@
 import express from "express";
+import cors from "cors";
 
+import { env } from "./config/env.js";
 import { errorHandler } from "./middleware/error-handler.js";
 import { notFound } from "./middleware/not-found.js";
 import { authRouter } from "./routes/auth.routes.js";
@@ -12,10 +14,29 @@ import { sendSuccess } from "./utils/api-response.js";
 
 export const app = express();
 
+const corsOrigins = env.CORS_ORIGINS.split(",").map((origin) => origin.trim()).filter(Boolean);
+function isValidCorsOrigin(origin: string): boolean {
+  try {
+    const url = new URL(origin);
+    return ["http:", "https:"].includes(url.protocol) && url.origin === origin;
+  } catch {
+    return false;
+  }
+}
+if (corsOrigins.some((origin) => !isValidCorsOrigin(origin))) {
+  throw new Error("CORS_ORIGINS harus berisi origin HTTP(S) lengkap tanpa wildcard atau path");
+}
+
 app.disable("x-powered-by");
 app.set("json replacer", (_key: string, value: unknown) =>
   typeof value === "bigint" ? value.toString() : value,
 );
+app.use(cors({
+  origin: corsOrigins,
+  methods: ["GET", "POST", "PATCH", "PUT", "DELETE", "OPTIONS"],
+  allowedHeaders: ["Authorization", "Content-Type"],
+  maxAge: 600,
+}));
 app.use(express.json({ limit: "1mb" }));
 app.use(express.urlencoded({ extended: true, limit: "1mb" }));
 

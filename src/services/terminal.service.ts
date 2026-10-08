@@ -1,11 +1,25 @@
+import { randomUUID } from "node:crypto";
+
 import { prisma } from "../config/prisma.js";
-import type { Prisma } from "../generated/prisma/client.js";
+import type { AuditAction, Prisma } from "../generated/prisma/client.js";
 import type {
   CreateTerminalInput,
   ListTerminalsQuery,
   UpdateTerminalInput,
 } from "../schemas/terminal.schema.js";
 import { AppError } from "../utils/app-error.js";
+
+const asJson = (value: unknown) => JSON.parse(JSON.stringify(value)) as Prisma.InputJsonValue;
+const terminalAudit = (actorId: string, action: AuditAction, entityId: string, oldData?: unknown, newData?: unknown) => prisma.auditLog.create({
+  data: {
+    userId: actorId,
+    action,
+    entityType: "TERMINAL",
+    entityId,
+    ...(oldData === undefined ? {} : { oldData: asJson(oldData) }),
+    ...(newData === undefined ? {} : { newData: asJson(newData) }),
+  },
+});
 
 function terminalOrderBy(
   sortBy: ListTerminalsQuery["sortBy"],
@@ -58,22 +72,26 @@ export async function getTerminalById(id: string) {
   return terminal;
 }
 
-export async function createTerminal(input: CreateTerminalInput) {
-  return prisma.terminal.create({
-    data: {
+export async function createTerminal(input: CreateTerminalInput, actorId: string) {
+  const id = randomUUID();
+  const data = {
+      id,
       code: input.code.toUpperCase(),
       name: input.name,
       ...(input.address === undefined ? {} : { address: input.address }),
       ...(input.city === undefined ? {} : { city: input.city }),
       isActive: input.isActive,
-    },
-  });
+  };
+  const [terminal] = await prisma.$transaction([
+    prisma.terminal.create({ data }),
+    terminalAudit(actorId, "CREATE", id, undefined, data),
+  ]);
+  return terminal;
 }
 
-export async function updateTerminal(id: string, input: UpdateTerminalInput) {
-  return prisma.terminal.update({
-    where: { id },
-    data: {
+export async function updateTerminal(id: string, input: UpdateTerminalInput, actorId: string) {
+  const old = await getTerminalById(id);
+  const data = {
       ...(input.code === undefined
         ? {}
         : { code: input.code.toUpperCase() }),
@@ -81,13 +99,20 @@ export async function updateTerminal(id: string, input: UpdateTerminalInput) {
       ...(input.address === undefined ? {} : { address: input.address }),
       ...(input.city === undefined ? {} : { city: input.city }),
       ...(input.isActive === undefined ? {} : { isActive: input.isActive }),
-    },
-  });
+  };
+  const [terminal] = await prisma.$transaction([
+    prisma.terminal.update({ where: { id }, data }),
+    terminalAudit(actorId, "UPDATE", id, old, data),
+  ]);
+  return terminal;
 }
 
-export async function deactivateTerminal(id: string) {
-  return prisma.terminal.update({
-    where: { id },
-    data: { isActive: false },
-  });
+export async function deactivateTerminal(id: string, actorId: string) {
+  const old = await getTerminalById(id);
+  const data = { isActive: false };
+  const [terminal] = await prisma.$transaction([
+    prisma.terminal.update({ where: { id }, data }),
+    terminalAudit(actorId, "DELETE", id, old, data),
+  ]);
+  return terminal;
 }

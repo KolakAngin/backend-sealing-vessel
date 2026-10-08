@@ -92,7 +92,14 @@ test("CRUD Terminal", async () => {
 
     const invalidId = await requestJson<unknown>(`${baseUrl}/bukan-uuid`);
     assert.equal(invalidId.response.status, 400);
+
+    const actions = await prisma.auditLog.findMany({
+      where: { entityId: terminalId, userId: identity.user.id },
+      select: { action: true },
+    });
+    assert.deepEqual(new Set(actions.map((entry: { action: string }) => entry.action)), new Set(["CREATE", "UPDATE", "DELETE"]));
   } finally {
+    await prisma.auditLog.deleteMany({ where: { userId: identity.user.id } });
     if (terminalId) {
       await prisma.terminal.delete({ where: { id: terminalId } }).catch(() => {});
     }

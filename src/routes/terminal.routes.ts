@@ -32,13 +32,13 @@ terminalRouter.get(
 );
 terminalRouter.post(
   "/",
-  authorize("ADMIN", "SUPERVISOR"),
+  authorize("ADMIN"),
   validateRequest(createTerminalRequestSchema),
   createTerminalController,
 );
 terminalRouter.patch(
   "/:id",
-  authorize("ADMIN", "SUPERVISOR"),
+  authorize("ADMIN"),
   validateRequest(updateTerminalRequestSchema),
   updateTerminalController,
 );

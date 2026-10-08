@@ -7,7 +7,7 @@ const secret = new TextEncoder().encode(env.JWT_SECRET);
 const tokenPayloadSchema = z.object({
   sub: z.uuid(),
   username: z.string(),
-  role: z.enum(["ADMIN", "SUPERVISOR", "OPERATOR", "VIEWER"]),
+  role: z.enum(["ADMIN", "SUPERVISOR", "LOADING_MASTER", "UNLOADING_MASTER", "VIEWER"]),
 });
 
 export type AccessTokenUser = z.infer<typeof tokenPayloadSchema>;

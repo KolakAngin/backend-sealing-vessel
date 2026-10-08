@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-const userRole = z.enum(["ADMIN", "SUPERVISOR", "OPERATOR", "VIEWER"]);
+const userRole = z.enum(["ADMIN", "SUPERVISOR", "LOADING_MASTER", "UNLOADING_MASTER", "VIEWER"]);
 const idParams = z.object({ id: z.uuid("ID user harus berupa UUID yang valid") });
 
 export const loginBody = z.object({
@@ -13,7 +13,7 @@ export const createUserBody = z.object({
   password: z.string().min(8).max(72),
   fullName: z.string().trim().min(1).max(100),
   email: z.string().trim().email().max(100).nullable().optional(),
-  role: userRole.default("OPERATOR"),
+  role: userRole.default("LOADING_MASTER"),
   isActive: z.boolean().default(true),
 }).strict();
 
@@ -42,14 +42,34 @@ export const listUsersQuery = z.object({
   sortOrder: z.enum(["asc", "desc"]).default("desc"),
 });
 
+// Lookup penugasan untuk Loading Master. Role dibatasi agar route ini tidak
+// menjadi pintu untuk membaca daftar user dengan role lain.
+export const assignableUsersQuery = z.object({
+  role: z.literal("UNLOADING_MASTER"),
+  search: z.string().trim().min(1).max(100).optional(),
+  page: z.coerce.number().int().positive().default(1),
+  limit: z.coerce.number().int().positive().max(100).default(100),
+});
+
+// Bentuk query yang dikirim Flutter saat ini ke GET /users. Query ini hanya
+// dipakai untuk lookup terbatas oleh Loading Master/Supervisor.
+export const flutterAssignableUsersQuery = assignableUsersQuery.extend({
+  isActive: z.literal("true"),
+  sortBy: z.literal("fullName"),
+  sortOrder: z.literal("asc"),
+}).strict();
+
 export const loginRequest = z.object({ body: loginBody, params: z.object({}), query: z.object({}) });
 export const createUserRequest = z.object({ body: createUserBody, params: z.object({}), query: z.object({}) });
 export const updateUserRequest = z.object({ body: updateUserBody, params: idParams, query: z.object({}) });
 export const userDetailRequest = z.object({ body: z.unknown(), params: idParams, query: z.object({}) });
 export const listUsersRequest = z.object({ body: z.unknown(), params: z.object({}), query: listUsersQuery });
+export const assignableUsersRequest = z.object({ body: z.unknown(), params: z.object({}), query: assignableUsersQuery });
+export const flutterAssignableUsersRequest = z.object({ body: z.unknown(), params: z.object({}), query: flutterAssignableUsersQuery });
 
 export type LoginInput = z.infer<typeof loginBody>;
 export type CreateUserInput = z.infer<typeof createUserBody>;
 export type UpdateUserInput = z.infer<typeof updateUserBody>;
 export type ListUsersInput = z.infer<typeof listUsersQuery>;
+export type AssignableUsersInput = z.infer<typeof assignableUsersQuery>;
 export type UserIdParams = z.infer<typeof idParams>;
