@@ -1,17 +1,17 @@
 {
   "fixtureVersion": 1,
-  "templateSha256": "231031f64a1264c24508552b99466963938cccad64687a7a5400ebd4bbab48e6",
+  "layoutSha256": "248d76c5c7c2018fef914f87330ee5edba2a2c6634b73d83ce8b8c8499409a53",
   "formPageCount": 3,
   "appendixPageCount": 2,
   "pageCount": 5,
   "pageSize": { "width": 595.4, "height": 842, "tolerance": 0.6 },
   "anchors": [
-    { "page": 1, "text": "OB. QUEEN SOFIA", "x": 199, "y": 728, "tolerance": 8 },
-    { "page": 1, "text": "QS-A-1P-1", "x": 218, "y": 471, "tolerance": 4 },
-    { "page": 2, "text": "QS-B-001", "x": 269, "y": 714, "tolerance": 4 },
-    { "page": 3, "text": "QS-G-001", "x": 416, "y": 570, "tolerance": 5 },
-    { "page": 3, "text": "Chief Officer Queen Sofia", "x": 119, "y": 110, "tolerance": 6 },
-    { "page": 4, "text": "APPENDIX DOKUMENTASI", "x": 36, "y": 806, "tolerance": 3 },
-    { "page": 5, "text": "Foto Queen Sofia 10", "x": 80, "y": 565, "tolerance": 16 }
+    { "page": 1, "text": "SEALING REPORT", "x": 231, "y": 758, "tolerance": 4 },
+    { "page": 1, "text": "QS-A-1P-1", "x": 152, "y": 525, "tolerance": 4 },
+    { "page": 2, "text": "QS-B-001", "x": 239, "y": 691, "tolerance": 4 },
+    { "page": 3, "text": "QS-G-001", "x": 464, "y": 619, "tolerance": 5 },
+    { "page": 3, "text": "Chief Officer Queen Sofia", "x": 82, "y": 69, "tolerance": 6 },
+    { "page": 4, "text": "APPENDIX DOKUMENTASI", "x": 36, "y": 760, "tolerance": 3 },
+    { "page": 5, "text": "Foto Queen Sofia 10", "x": 80, "y": 537, "tolerance": 16 }
   ]
 }

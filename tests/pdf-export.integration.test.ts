@@ -13,13 +13,13 @@ import { app } from "../src/app.js";
 import { env } from "../src/config/env.js";
 import { prisma } from "../src/config/prisma.js";
 import type { Prisma } from "../src/generated/prisma/client.js";
-import { buildOfficialPdf, OFFICIAL_PDF_TEMPLATE_SHA256 } from "../src/services/pdf-export.service.js";
+import { buildOfficialPdf, NATIVE_PDF_LAYOUT_SHA256, PDF_RENDERER_VERSION } from "../src/services/pdf-export.service.js";
 import { removeFile, saveFile } from "../src/storage/local-storage.js";
 import { authorizationHeaders, createTestIdentity } from "./helpers/auth.js";
 
 type Anchor = { page: number; text: string; x: number; y: number; tolerance: number };
 type Golden = {
-  templateSha256: string;
+  layoutSha256: string;
   formPageCount: number;
   appendixPageCount: number;
   pageCount: number;
@@ -33,8 +33,7 @@ const standardFontDataUrl = `${path.resolve(process.cwd(), "node_modules/pdfjs-d
 test("PDF final Queen Sofia deterministik, tersimpan, A4, dan mempunyai appendix foto", async () => {
   await prisma.$connect();
   const golden = JSON.parse(await readFile(new URL("./fixtures/queen-sofia-pdf.visual.json", import.meta.url), "utf8")) as Golden;
-  assert.equal(golden.templateSha256, OFFICIAL_PDF_TEMPLATE_SHA256);
-  assert.equal(sha256(await readFile(path.resolve(process.cwd(), env.SEALING_PDF_TEMPLATE_PATH))), golden.templateSha256);
+  assert.equal(golden.layoutSha256, NATIVE_PDF_LAYOUT_SHA256);
 
   const admin = await createTestIdentity("ADMIN");
   const viewer = await createTestIdentity("VIEWER");
@@ -74,13 +73,13 @@ test("PDF final Queen Sofia deterministik, tersimpan, A4, dan mempunyai appendix
     return { id, ownerType: "REPORT", type: "PHOTO", sectionCode: String.fromCharCode(65 + (index % 8)), compartmentId: null, vesselSealingPointId: null, caption: `Foto Queen Sofia ${index + 1}`, sequence: index + 1, fileName: `queen-sofia-${index + 1}.png`, fileUrl: `/api/v1/attachments/${id}/preview`, mimeType: "image/png", fileSize: String(image.length), checksumSha256: sha256(image), uploadedById: admin.user.id, createdAt: `2026-07-29T00:${String(index).padStart(2, "0")}:00.000Z` };
   });
   const finalSnapshot = {
-    schemaVersion: 1, capturedAt: "2026-07-29T00:00:00.000Z", finalizedById: admin.user.id,
+    schemaVersion: 1, capturedAt: "2026-07-29T00:00:00.000Z", finalizedById: "snapshot-loading-master",
     report: {
       id: "snapshot-report", reportNo: "RPT-QS-PDF", shipmentNumber: `SHP-QS-PDF-${suffix}`, voyageNumber: "VOY-QS-2026-01",
       activity: { code: "LOADING", name: "LOADING" }, vessel: { id: "snapshot-vessel", name: "OB. QUEEN SOFIA", imoNumber: null }, product: { name: "B40" },
       loadingPlant: { code: "TAB", name: "STS TABONEO" }, loadingJetty: { name: "MT. GLOBAL TOP" }, dischargePlant: { code: "MKS", name: "INTEGRATED TERMINAL MAKASSAR" }, dischargeJetty: { name: "JETTY 1" },
       sealingStatus: "COMPLETED", journeyStatus: "FINISH", sealingProcessStatus: "FINALIZED", reportDateTime: "2026-07-28T08:30:00.000Z", departedAt: null, arrivedAt: null, finishedAt: "2026-07-29T00:00:00.000Z",
-      loadingMaster: { fullName: "Loading Master Queen Sofia" }, unloadingMaster: { fullName: "Unloading Master Queen Sofia" }, remarks: null,
+      loadingMaster: { id: "snapshot-loading-master", fullName: "Loading Master Queen Sofia" }, unloadingMaster: { id: "snapshot-unloading-master", fullName: "Unloading Master Queen Sofia" }, remarks: null,
     },
     formConfigurationSnapshot: { schemaVersion: 1, sections, compartments, points },
     signatures: [{ id: signatureId, role: "CHIEF_OFFICER", name: "Chief Officer Queen Sofia", signedAt: "2026-07-29T01:00:00.000Z", signatureUrl: `/api/v1/signatures/${signatureId}/preview`, signatureFileName: "chief.png", signatureMimeType: "image/png", signatureFileSize: String(image.length), signatureChecksumSha256: sha256(image) }],
@@ -109,15 +108,39 @@ test("PDF final Queen Sofia deterministik, tersimpan, A4, dan mempunyai appendix
     withoutG.attachments = [];
     const unavailablePdf = await buildOfficialPdf(withoutG as never);
     const unavailableParsed = await getDocument({ data: new Uint8Array(unavailablePdf.buffer), useSystemFonts: false, standardFontDataUrl }).promise;
-    const unavailableText = (await (await unavailableParsed.getPage(3)).getTextContent()).items.filter((item) => "str" in item).map((item) => item.str).join(" ");
-    assert.match(unavailableText, /Bagian G tidak tersedia/);
-    assert.match(unavailableText, /NOT_APPLICABLE/);
+    const unavailableText = (await (await unavailableParsed.getPage(2)).getTextContent()).items.filter((item) => "str" in item).map((item) => item.str).join(" ");
+    assert.doesNotMatch(unavailableText, /Bagian G tidak tersedia/);
+    assert.doesNotMatch(unavailableText, /NOT_APPLICABLE/);
+
+    const unloadingSnapshot = structuredClone(finalSnapshot);
+    unloadingSnapshot.finalizedById = "snapshot-unloading-master";
+    unloadingSnapshot.attachments = [];
+    const unloadingPdf = await buildOfficialPdf(unloadingSnapshot as never);
+    const unloadingParsed = await getDocument({ data: new Uint8Array(unloadingPdf.buffer), useSystemFonts: false, standardFontDataUrl }).promise;
+    const unloadingText = (await (await unloadingParsed.getPage(1)).getTextContent()).items.filter((item) => "str" in item).map((item) => item.str).join(" ");
+    assert.match(unloadingText, /We are\s+Unloading Master Queen Sofia/);
+    assert.match(unloadingText, /at port\s+INTEGRATED TERMINAL MAKASSAR \/ JETTY 1/);
+
+    const emptySealSnapshot = structuredClone(finalSnapshot);
+    emptySealSnapshot.attachments = [];
+    emptySealSnapshot.records.forEach((record) => {
+      record.status = "NOT_APPLICABLE";
+      record.seals = [];
+    });
+    const compactPdf = await buildOfficialPdf(emptySealSnapshot as never);
+    assert.equal(compactPdf.formPageCount, 2, "A-H tanpa nomor segel harus dipadatkan menjadi dua halaman form");
+    assert.equal(compactPdf.pageCount, 2);
+    const compactParsed = await getDocument({ data: new Uint8Array(compactPdf.buffer), useSystemFonts: false, standardFontDataUrl }).promise;
+    const compactPage2Text = (await (await compactParsed.getPage(2)).getTextContent()).items.filter((item) => "str" in item).map((item) => item.str).join(" ");
+    for (const code of "BCDEFGH") assert.match(compactPage2Text, new RegExp(`${code}\\.`));
+    assert.doesNotMatch(compactPage2Text, /NOT_APPLICABLE|QS-[B-H]-/);
 
     const generatedResponse = await fetch(`${api}/shipments/${report.id}/pdf`, { method: "POST", headers: authorizationHeaders(admin.accessToken) });
-    const generated = await generatedResponse.json() as Api<{ fileName: string; checksumSha256: string; templateChecksumSha256: string; formPageCount: number; appendixPageCount: number; pageCount: number; reused: boolean }>;
+    const generated = await generatedResponse.json() as Api<{ fileName: string; checksumSha256: string; templateChecksumSha256: string; rendererVersion: string; formPageCount: number; appendixPageCount: number; pageCount: number; reused: boolean }>;
     assert.equal(generatedResponse.status, 201, JSON.stringify(generated));
     assert.equal(generated.data.reused, false);
-    assert.equal(generated.data.templateChecksumSha256, golden.templateSha256);
+    assert.equal(generated.data.templateChecksumSha256, golden.layoutSha256);
+    assert.equal(generated.data.rendererVersion, PDF_RENDERER_VERSION);
     assert.equal(generated.data.formPageCount, golden.formPageCount);
     assert.equal(generated.data.appendixPageCount, golden.appendixPageCount);
     assert.equal(generated.data.pageCount, golden.pageCount);
@@ -142,6 +165,21 @@ test("PDF final Queen Sofia deterministik, tersimpan, A4, dan mempunyai appendix
     assert.equal(await prisma.pdfArtifact.count({ where: { sealingReportId: report.id } }), 1);
     assert.equal(await prisma.auditLog.count({ where: { entityType: "PDF_EXPORT", entityId: report.id } }), 1);
 
+    await prisma.pdfArtifact.update({
+      where: { sealingReportId: report.id },
+      data: { rendererVersion: "tko-background-overlay-v1", templateChecksumSha256: "231031f64a1264c24508552b99466963938cccad64687a7a5400ebd4bbab48e6" },
+    });
+    const stalePreview = await fetch(`${api}/reports/${report.id}/pdf/preview`, { headers: authorizationHeaders(admin.accessToken) });
+    assert.equal(stalePreview.status, 409, "artefak renderer lama tidak boleh dipreview sebagai hasil native");
+    const regeneratedResponse = await fetch(`${api}/reports/${report.id}/pdf`, { method: "POST", headers: authorizationHeaders(admin.accessToken) });
+    const regenerated = await regeneratedResponse.json() as Api<{ checksumSha256: string; rendererVersion: string; reused: boolean }>;
+    assert.equal(regeneratedResponse.status, 201, JSON.stringify(regenerated));
+    assert.equal(regenerated.data.reused, false);
+    assert.equal(regenerated.data.rendererVersion, PDF_RENDERER_VERSION);
+    assert.equal(regenerated.data.checksumSha256, generated.data.checksumSha256, "regenerasi layout native harus deterministik");
+    assert.equal(await prisma.pdfArtifact.count({ where: { sealingReportId: report.id } }), 1);
+    assert.equal(await prisma.auditLog.count({ where: { entityType: "PDF_EXPORT", entityId: report.id } }), 2);
+
     const pdf = await PDFDocument.load(bytes);
     assert.equal(pdf.getPageCount(), golden.pageCount);
     for (const page of pdf.getPages()) {
@@ -155,13 +193,16 @@ test("PDF final Queen Sofia deterministik, tersimpan, A4, dan mempunyai appendix
     }).promise;
     const page2Text = (await (await parsed.getPage(2)).getTextContent()).items.filter((item) => "str" in item).map((item) => item.str).join(" ");
     const page3Text = (await (await parsed.getPage(3)).getTextContent()).items.filter((item) => "str" in item).map((item) => item.str).join(" ");
+    const page1Text = (await (await parsed.getPage(1)).getTextContent()).items.filter((item) => "str" in item).map((item) => item.str).join(" ");
+    assert.match(page1Text, /We are\s+Loading Master Queen Sofia/);
+    assert.match(page1Text, /at port\s+STS TABONEO \/ MT\. GLOBAL TOP/);
     for (const code of "BCDE") assert.match(page2Text, new RegExp(`QS-${code}-001`));
     for (const code of "FGH") assert.match(page3Text, new RegExp(`QS-${code}-001`));
     const imageOperators = new Set([OPS.paintImageXObject, OPS.paintInlineImageXObject, OPS.paintImageMaskXObject, OPS.paintSolidColorImageMask]);
     const page1Images = (await (await parsed.getPage(1)).getOperatorList()).fnArray.filter((operator) => imageOperators.has(operator)).length;
     const page3Images = (await (await parsed.getPage(3)).getOperatorList()).fnArray.filter((operator) => imageOperators.has(operator)).length;
     const page4Images = (await (await parsed.getPage(4)).getOperatorList()).fnArray.filter((operator) => imageOperators.has(operator)).length;
-    assert.ok(page1Images >= 1, "logo template harus tetap tertanam");
+    assert.equal(page1Images, 1, "halaman form native hanya boleh membawa satu citra logo, bukan citra halaman template");
     assert.ok(page3Images >= 1, "citra tanda tangan harus tertanam");
     assert.ok(page4Images >= 9, "sembilan foto appendix pertama harus tertanam");
     for (const anchor of golden.anchors) {

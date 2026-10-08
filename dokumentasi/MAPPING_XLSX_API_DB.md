@@ -130,16 +130,16 @@ Seed tetap menyemai kategori A–H, terminal legacy, serta contoh Queen Sofia da
 | Kebutuhan | Endpoint/layanan saat ini | Status |
 |---|---|---|
 | Ekspor XLSX tiga panel sesuai Excel utama | `POST /reports|voyages|shipments/:reportId/xlsx` memakai template immutable dan `finalSnapshot` | Tersedia pada STEP 9. |
-| Ekspor PDF tiga halaman | `POST /reports|voyages|shipments/:reportId/pdf` memakai background PDF TKO immutable dan `finalSnapshot` | Tersedia pada STEP 10; overflow memakai set 3 halaman continuation. |
+| Ekspor PDF tiga halaman | `POST /reports|voyages|shipments/:reportId/pdf` membuat layout TKO secara native dari `finalSnapshot` | Tersedia pada STEP 10; overflow memakai set 3 halaman native continuation. |
 | Menyertakan tanda tangan pada posisi layout | Nama/waktu dan citra JPEG/PNG/WebP dirender ke tiga kotak resmi; PDF/URL ditulis sebagai referensi | Tersedia pada XLSX. |
 | Contact sheet foto 3 × 3 dengan caption dan sequence | Appendix PDF mengumpulkan foto report/section/record/verification dari snapshot, lalu mengurutkan sequence/createdAt/ID | Tersedia; JPEG/PNG/WebP dirender, dokumen PDF tidak diperlakukan sebagai foto. |
 | Preview/download lampiran asli | `GET /attachments/:id/preview` dan `/download`; `/file` tetap alias preview | Tersedia, tetapi bukan ekspor laporan. |
 | Preview/download XLSX | `GET /reports|voyages|shipments/:reportId/xlsx/preview|download` | Tersedia setelah generate. |
-| Preview/download PDF final | `GET /reports|voyages|shipments/:reportId/pdf/preview|download` | Membaca `PdfArtifact` immutable dan memverifikasi checksum sebelum mengirim. |
+| Preview/download PDF final | `GET /reports|voyages|shipments/:reportId/pdf/preview|download` | Membaca `PdfArtifact` versi renderer aktif dan memverifikasi checksum sebelum mengirim. |
 | Print structure A4 | Margin, portrait, page break, printer settings, ukuran kolom/baris dipertahankan; template sumber tidak memiliki defined print area | Sesuai sumber, tanpa menebak scaling. |
 | Overflow | Worksheet `Segel Lanjutan N`, setiap sheet klon template resmi dengan chunk row/kolom | Tersedia dan diuji. |
 
-PDF memakai PDF referensi tambahan sebagai sumber geometry tiga halaman. Hal ini tidak mengubah hierarki data: nilai dan struktur dinamis tetap berasal dari `finalSnapshot`, sedangkan PDF referensi hanya menjadi latar layout A4. `PdfArtifact` menyimpan checksum snapshot/template/hasil dan unique per laporan agar unduhan ulang identik.
+PDF dibuat ulang secara native sebagai tiga halaman form A4. PDF referensi hanya dipakai sebagai acuan desain saat pengembangan dan tidak dibaca, disalin, atau ditanam pada proses generate. Seluruh nilai dan struktur dinamis berasal dari `finalSnapshot`. `PdfArtifact` menyimpan checksum snapshot/layout/hasil dan tetap unique per laporan; artefak renderer lama diregenerasi ketika endpoint generate dipanggil.
 
 ## 8. Endpoint transaksi yang tersedia pada working tree
 

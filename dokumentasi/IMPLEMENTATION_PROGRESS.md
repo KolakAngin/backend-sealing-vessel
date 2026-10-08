@@ -59,7 +59,7 @@ Frontend `front-end-kapal` berada di luar repository Git backend dan tidak memil
 | Tanda tangan | Tiga role unik per laporan, nama/waktu, file terkelola, preview/download, authorization, audit, final snapshot, final lock, dan render XLSX/PDF | Kewajiban per tahap tetap menunggu keputusan sumber | Backend selesai |
 | Master seed | Kategori/template dan data legacy tetap ada; seluruh 6 plant, 5 vessel, 3 activity, 8 product, 3 UoM, dan 5 jetty dari sheet disemai idempoten | Tidak ada gap untuk cakupan master sheet kedua | Selesai untuk lingkup ini |
 | XLSX export | Template immutable, mapping A–H/header/signature, continuation page, preview/download, checksum, audit, fixture Queen Sofia | Tidak ada gap backend yang bersumber | Selesai |
-| PDF export | A4 deterministik, tiga halaman form, continuation, appendix foto, artefak immutable/checksum, preview/download, fixture visual Queen Sofia | Tidak ada gap backend yang bersumber | Selesai |
+| PDF export | A4 deterministik, halaman/baris native dinamis, satu buffer row, continuation, appendix foto, artefak berversi/checksum, preview/download, fixture visual Queen Sofia | Tidak ada gap backend yang bersumber | Selesai |
 | Audit log | Transaksi, lifecycle, seal, attachment, signature, export, seluruh master/user/Terminal/configuration vessel | Read-only request tidak dicatat sebagai mutasi | Selesai |
 
 ## 4. Temuan audit prioritas
@@ -406,15 +406,18 @@ Verifikasi STEP 9:
 
 Perubahan backend STEP 10:
 
-- memakai PDF referensi TKO tiga halaman sebagai background immutable dengan checksum terkunci;
-- overlay deterministik dari `finalSnapshot` memakai Helvetica/Helvetica-Bold bawaan PDF, tanpa ketergantungan Office/browser/font host;
-- mempertahankan A4 dan pemisahan halaman A, B-E, serta F-H/tanda tangan;
+- membuat ulang halaman form TKO secara native tanpa background atau page object dari PDF referensi;
+- memakai aset logo Pertamina Patra Niaga transparan pada kiri atas setiap halaman, dengan checksum aset diverifikasi sebelum render;
+- memilih identitas Loading/Unloading Master dan port terkait dari `finalizedById`, menebalkan seluruh nilai shipment pada header/paragraf, serta mengosongkan point tanpa nomor segel dan section nonaktif;
+- membentuk baris hanya dari nomor segel aktif, menambah satu buffer row pada tabel yang belum penuh, menyisakan tepat satu row pada tabel kosong/nonaktif, dan memadatkan jumlah halaman form;
+- renderer deterministik dari `finalSnapshot` memakai teks, garis, tabel, dan bentuk vektor dengan Helvetica/Helvetica-Bold bawaan PDF, tanpa ketergantungan Office/browser/font host;
+- mempertahankan A4, menempatkan A pada halaman header, lalu mengalirkan B-H secara dinamis dengan tanda tangan pada halaman form terakhir;
 - memetakan header shipment/voyage, Plant-Jetty, A-H, multiple seal, `NOT_APPLICABLE`, nama, citra, dan waktu tanda tangan;
-- memakai set tiga halaman resmi tambahan untuk overflow dan memberi label continuation;
+- membuat blok/halaman native tambahan untuk overflow dan memberi label continuation;
 - menambahkan appendix foto 3 × 3 setelah form, terurut sequence/createdAt/ID, dengan caption dan section;
-- memverifikasi checksum template, signature, foto, dan artefak tersimpan;
-- menambahkan model `PdfArtifact` satu-per-report dengan checksum hasil/snapshot/template, versi renderer, jumlah halaman, pembuat, dan waktu;
-- generate bersifat idempotent; preview/download selalu membaca file final yang sama dan tidak merender ulang;
+- memverifikasi checksum layout native, signature, foto, dan artefak tersimpan;
+- menambahkan model `PdfArtifact` satu-per-report dengan checksum hasil/snapshot/layout, versi renderer, jumlah halaman, pembuat, dan waktu;
+- generate bersifat idempotent untuk versi renderer aktif; artefak overlay lama diregenerasi dan preview/download hanya membaca hasil renderer aktif;
 - menambahkan endpoint PDF pada alias report/voyage/shipment dan audit `PDF_EXPORT`;
 - menambahkan fixture regresi visual Queen Sofia dan integration test determinisme, A4, jumlah/isi/anchor halaman, appendix, penyimpanan, otorisasi, serta kondisi gagal.
 
@@ -427,8 +430,8 @@ Verifikasi STEP 10:
 - `npx prisma validate` dan `npx prisma generate`: lulus;
 - migration `20260908170000_pdf_export_artifact`: berhasil diterapkan; 11 migration dan database up to date;
 - `npm run typecheck` dan `npm run build`: lulus;
-- `npm test`: seluruh 13 integration test lulus, termasuk `pdf-export.integration.test.ts`;
-- test PDF memeriksa dua render identik, tiga halaman form + dua appendix, seluruh halaman A4, isi seluruh A-H, section G tidak tersedia, logo, citra tanda tangan, sembilan foto per appendix, caption/sequence foto, anchor visual, metadata/checksum, preview/download byte-identik, idempotensi, audit, authorization, dan penolakan DRAFT;
+- `npm test`: seluruh 15 integration test lulus, termasuk `pdf-export.integration.test.ts`;
+- test PDF memeriksa dua render identik, layout padat dua halaman saat seluruh segel kosong, fixture tiga halaman form + dua appendix, seluruh halaman A4, isi seluruh A-H, section G tidak tersedia, logo, citra tanda tangan, sembilan foto per appendix, caption/sequence foto, anchor visual, metadata/checksum, preview/download byte-identik, idempotensi, audit, authorization, dan penolakan DRAFT;
 - `git diff --check`: lulus;
 - folder `front-end-kapal` tidak diubah.
 
