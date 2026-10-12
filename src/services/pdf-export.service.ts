@@ -51,6 +51,7 @@ type FinalRecord = {
 };
 type FinalSignature = {
   id: string;
+  phase?: "LOADING" | "UNLOADING" | null;
   role: "CHIEF_OFFICER" | "TERMINAL_REPRESENTATIVE" | "SURVEYOR";
   name: string;
   signedAt: string | null;
@@ -59,6 +60,8 @@ type FinalSignature = {
 };
 export type PdfFinalSnapshot = {
   schemaVersion: number;
+  documentType?: "BERITA_ACARA";
+  phase?: "LOADING" | "UNLOADING";
   capturedAt: string;
   finalizedById?: string | null;
   report: {
@@ -114,9 +117,14 @@ function assertReadable(report: { createdById: string; loadingMasterId: string |
 async function loadFinalReport(reportId: string, actor: PdfActor) {
   const report = await prisma.sealingReport.findUnique({
     where: { id: reportId },
-    select: { id: true, reportNo: true, shipmentNumber: true, voyageNumber: true, status: true, finalSnapshot: true, createdById: true, loadingMasterId: true, unloadingMasterId: true, pdfArtifact: true },
+    select: {
+      id: true, reportNo: true, shipmentNumber: true, voyageNumber: true, status: true, finalSnapshot: true,
+      createdById: true, loadingMasterId: true, unloadingMasterId: true, pdfArtifact: true,
+      baDocuments: { select: { id: true }, take: 1 },
+    },
   });
   if (!report) throw new AppError(404, "Shipment/voyage tidak ditemukan");
+  if (report.baDocuments.length > 0) throw new AppError(409, "Generator PDF legacy tidak dapat digunakan pada shipment phase-aware");
   assertReadable(report, actor);
   if (report.status !== "FINISH") throw new AppError(409, "PDF final hanya dapat dibuat dari laporan FINISH");
   return { report, snapshot: parseFinalSnapshot(report.finalSnapshot) };
@@ -318,7 +326,8 @@ const SECTION_A_HEADERS = [
 function renderNativeHeader(page: PDFPage, font: PDFFont, bold: PDFFont, snapshot: PdfFinalSnapshot, set: number, setCount: number) {
   const report = snapshot.report;
   const master = documentMasterContext(snapshot);
-  const title = setCount > 1 ? `SEALING REPORT — CONTINUATION ${set}/${setCount}` : "SEALING REPORT";
+  const baseTitle = snapshot.phase ? `BERITA ACARA ${snapshot.phase}` : "SEALING REPORT";
+  const title = setCount > 1 ? `${baseTitle} — CONTINUATION ${set}/${setCount}` : baseTitle;
   const titleSize = 15;
   page.drawText(title, { x: (A4.width - bold.widthOfTextAtSize(title, titleSize)) / 2, y: 758, size: titleSize, font: bold, color: COLOR.ink });
 
@@ -582,9 +591,13 @@ function renderNativeFlatSection(page: PDFPage, font: PDFFont, bold: PDFFont, bl
   return height;
 }
 
-async function readVerifiedStoredImage(id: string, mimeType: string, expectedChecksum: string | null, signature = false) {
+function signatureStoragePrefix(phase?: FinalSignature["phase"]) {
+  return phase ? `signature-${phase.toLowerCase()}-` : "signature-";
+}
+
+async function readVerifiedStoredImage(id: string, mimeType: string, expectedChecksum: string | null, signature = false, phase?: FinalSignature["phase"]) {
   if (!["image/jpeg", "image/png", "image/webp"].includes(mimeType)) return null;
-  const key = `${signature ? "signature-" : ""}${id}.${extensionForMimeType(mimeType)}`;
+  const key = `${signature ? signatureStoragePrefix(phase) : ""}${id}.${extensionForMimeType(mimeType)}`;
   let bytes: Buffer;
   try { bytes = await readFile(resolveFile(key)); } catch { throw new AppError(409, `File snapshot ${key} tidak tersedia`); }
   if (expectedChecksum && hash(bytes) !== expectedChecksum) throw new AppError(409, `Checksum file snapshot ${key} tidak sesuai`);
@@ -592,8 +605,8 @@ async function readVerifiedStoredImage(id: string, mimeType: string, expectedChe
   return { bytes, mimeType: mimeType === "image/jpeg" ? "image/jpeg" : "image/png" };
 }
 
-async function embedStoredImage(document: PDFDocument, id: string, mimeType: string, checksum: string | null, signature = false): Promise<PDFImage | null> {
-  const stored = await readVerifiedStoredImage(id, mimeType, checksum, signature);
+async function embedStoredImage(document: PDFDocument, id: string, mimeType: string, checksum: string | null, signature = false, phase?: FinalSignature["phase"]): Promise<PDFImage | null> {
+  const stored = await readVerifiedStoredImage(id, mimeType, checksum, signature, phase);
   if (!stored) return null;
   return stored.mimeType === "image/jpeg" ? document.embedJpg(stored.bytes) : document.embedPng(stored.bytes);
 }
@@ -622,7 +635,7 @@ async function renderNativeSignatures(document: PDFDocument, page: PDFPage, font
     }
     page.drawLine({ start: { x: x + 18, y: nameY + 35 }, end: { x: x + width - 18, y: nameY + 35 }, thickness: 0.45, color: COLOR.line });
     if (signature.signatureMimeType === "application/pdf") {
-      const key = `signature-${signature.id}.pdf`;
+      const key = `${signatureStoragePrefix(signature.phase)}${signature.id}.pdf`;
       let bytes: Buffer;
       try { bytes = await readFile(resolveFile(key)); } catch { throw new AppError(409, `File snapshot ${key} tidak tersedia`); }
       if (signature.signatureChecksumSha256 && hash(bytes) !== signature.signatureChecksumSha256) throw new AppError(409, `Checksum file snapshot ${key} tidak sesuai`);
@@ -632,7 +645,7 @@ async function renderNativeSignatures(document: PDFDocument, page: PDFPage, font
       const scale = Math.min((width - 30) / embedded.width, 66 / embedded.height);
       page.drawPage(embedded, { x: x + (width - embedded.width * scale) / 2, y: boxY + 61 + (66 - embedded.height * scale) / 2, width: embedded.width * scale, height: embedded.height * scale });
     } else if (signature.signatureMimeType) {
-      const image = await embedStoredImage(document, signature.id, signature.signatureMimeType, signature.signatureChecksumSha256, true);
+      const image = await embedStoredImage(document, signature.id, signature.signatureMimeType, signature.signatureChecksumSha256, true, signature.phase);
       if (image) {
         const scale = Math.min((width - 30) / image.width, 66 / image.height);
         page.drawImage(image, { x: x + (width - image.width * scale) / 2, y: boxY + 61 + (66 - image.height * scale) / 2, width: image.width * scale, height: image.height * scale });
@@ -707,7 +720,7 @@ export async function buildOfficialPdf(snapshotInput: PdfFinalSnapshot) {
     const page = output.addPage([A4.width, A4.height]);
     drawPageChrome(page, font, logo, snapshot, aPageCount + pageIndex + 1, pageCount);
     const continuation = contentPages.length > 1 ? ` — CONTINUATION ${pageIndex + 1}/${contentPages.length}` : "";
-    page.drawText(`SEALING REPORT — FORM A–H${continuation}`, { x: 36, y: 763, size: 11, font: bold, color: COLOR.ink });
+    page.drawText(`${snapshot.phase ? `BERITA ACARA ${snapshot.phase}` : "SEALING REPORT"} — FORM A–H${continuation}`, { x: 36, y: 763, size: 11, font: bold, color: COLOR.ink });
     let top = CONTENT_TOP;
     for (const block of contentPages[pageIndex]!) {
       top -= block.code <= "F"
@@ -721,8 +734,8 @@ export async function buildOfficialPdf(snapshotInput: PdfFinalSnapshot) {
   }
   await appendPhotoPages(output, snapshot, font, bold, logo, formPageCount, pageCount);
   const fixedDate = new Date(snapshot.capturedAt);
-  output.setTitle(`Laporan Segel ${snapshot.report.shipmentNumber ?? snapshot.report.reportNo}`);
-  output.setSubject("Laporan Segel Kapal TKO B3.1-612");
+  output.setTitle(`${snapshot.phase ? `Berita Acara ${snapshot.phase}` : "Laporan Segel"} ${snapshot.report.shipmentNumber ?? snapshot.report.reportNo}`);
+  output.setSubject(snapshot.phase ? `Berita Acara ${snapshot.phase} Kapal` : "Laporan Segel Kapal TKO B3.1-612");
   output.setAuthor("Sistem Segel Kapal");
   output.setCreator(PDF_RENDERER_VERSION);
   output.setProducer(PDF_RENDERER_VERSION);
@@ -769,8 +782,10 @@ export async function generateOfficialPdf(reportId: string, actor: PdfActor) {
   let backupPath: string | null = null;
   try {
     const result = await prisma.$transaction(async (rawTransaction) => {
-      const tx = rawTransaction as unknown as Pick<typeof prisma, "pdfArtifact" | "auditLog" | "$queryRawUnsafe">;
+      const tx = rawTransaction as unknown as Pick<typeof prisma, "pdfArtifact" | "beritaAcaraDocument" | "auditLog" | "$queryRawUnsafe">;
       await tx.$queryRawUnsafe('SELECT "id" FROM "sealing_report" WHERE "id" = $1 FOR UPDATE', reportId);
+      const phaseAwareDocument = await tx.beritaAcaraDocument.findFirst({ where: { sealingReportId: reportId }, select: { id: true } });
+      if (phaseAwareDocument) throw new AppError(409, "Generator PDF legacy tidak dapat membuat artefak kedua untuk shipment phase-aware");
       const existing = await tx.pdfArtifact.findUnique({ where: { sealingReportId: reportId } });
       if (existing && artifactUsesCurrentRenderer(existing, snapshot)) {
         await verifiedArtifactFile(existing);

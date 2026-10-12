@@ -84,7 +84,7 @@ Mapping yang dapat digunakan sebagai arah target, tetapi belum diimplementasikan
 | Jenis kolom/equipment | `SealingPointTemplate` | Template canonical satu-ke-satu dengan taxonomy Excel utama; template lama A-03/C-01/D-01 tetap tersedia sebagai legacy dan tidak dipakai sebagai default canonical. |
 | Konfigurasi aktual vessel | `VesselSealingPoint` | Mendukung compartment, side, location, instance, sequence, availability; fondasi dinamis tersedia. |
 | Satu titik pada satu voyage | `SealingRecord` | Unique per report + vessel sealing point; `pointSnapshot` menyimpan label/config saat inisialisasi dan status awal `NOT_SEALED`. |
-| Nomor segel | `Seal.sealNumber` | Backend form STEP 6 mendukung banyak nomor per record, batch per section, dan unik global; frontend voyage belum memakai API tersebut. |
+| Nomor segel | `Seal.sealNumber` + `Seal.sealingReportId` | Backend form STEP 6 mendukung banyak nomor per record dan batch per section. Nomor dinormalisasi uppercase serta unik per shipment; nomor yang sama dapat digunakan pada shipment berbeda. |
 | Kondisi saat unloading | `SealVerification` | Tersedia; bukan bagian layout form sumber tetapi mendukung workflow pemeriksaan. |
 | Foto/dokumen | `Attachment` | STEP 8 mendukung owner report, section A–H, record, atau verification; caption, sequence, konteks compartment/titik, metadata MIME/ukuran/SHA-256, preview, dan download. `description` dipertahankan sebagai alias legacy. |
 
@@ -129,13 +129,13 @@ Seed tetap menyemai kategori A–H, terminal legacy, serta contoh Queen Sofia da
 
 | Kebutuhan | Endpoint/layanan saat ini | Status |
 |---|---|---|
-| Ekspor XLSX tiga panel sesuai Excel utama | `POST /reports|voyages|shipments/:reportId/xlsx` memakai template immutable dan `finalSnapshot` | Tersedia pada STEP 9. |
-| Ekspor PDF tiga halaman | `POST /reports|voyages|shipments/:reportId/pdf` membuat layout TKO secara native dari `finalSnapshot` | Tersedia pada STEP 10; overflow memakai set 3 halaman native continuation. |
+| Ekspor XLSX operasional tiga panel sesuai Excel utama | `POST /reports|voyages|shipments/:reportId/xlsx` memakai template immutable dan `finalSnapshot`; bukan artefak BA | Tersedia pada STEP 9. |
+| Ekspor PDF final | `POST /reports|voyages|shipments/:reportId/pdf` mengarah ke BA UNLOADING untuk phase-aware dan generator `finalSnapshot` untuk historis tanpa dokumen BA | Compatibility facade tersedia. |
 | Menyertakan tanda tangan pada posisi layout | Nama/waktu dan citra JPEG/PNG/WebP dirender ke tiga kotak resmi; PDF/URL ditulis sebagai referensi | Tersedia pada XLSX. |
 | Contact sheet foto 3 × 3 dengan caption dan sequence | Appendix PDF mengumpulkan foto report/section/record/verification dari snapshot, lalu mengurutkan sequence/createdAt/ID | Tersedia; JPEG/PNG/WebP dirender, dokumen PDF tidak diperlakukan sebagai foto. |
 | Preview/download lampiran asli | `GET /attachments/:id/preview` dan `/download`; `/file` tetap alias preview | Tersedia, tetapi bukan ekspor laporan. |
 | Preview/download XLSX | `GET /reports|voyages|shipments/:reportId/xlsx/preview|download` | Tersedia setelah generate. |
-| Preview/download PDF final | `GET /reports|voyages|shipments/:reportId/pdf/preview|download` | Membaca `PdfArtifact` versi renderer aktif dan memverifikasi checksum sebelum mengirim. |
+| Preview/download PDF final | `GET /reports|voyages|shipments/:reportId/pdf/preview|download` | Membaca byte/checksum `BeritaAcaraPdfArtifact` UNLOADING untuk phase-aware atau `PdfArtifact` untuk historis. |
 | Print structure A4 | Margin, portrait, page break, printer settings, ukuran kolom/baris dipertahankan; template sumber tidak memiliki defined print area | Sesuai sumber, tanpa menebak scaling. |
 | Overflow | Worksheet `Segel Lanjutan N`, setiap sheet klon template resmi dengan chunk row/kolom | Tersedia dan diuji. |
 

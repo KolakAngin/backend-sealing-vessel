@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
-import { readFile, unlink } from "node:fs/promises";
+import { readFile, unlink, writeFile } from "node:fs/promises";
 import type { AddressInfo } from "node:net";
 import path from "node:path";
 import { test } from "node:test";
@@ -52,7 +52,7 @@ function structuralFragments(xml: string) {
   };
 }
 
-test("XLSX resmi Queen Sofia memetakan nilai dan mempertahankan struktur template", async () => {
+test("XLSX operasional Queen Sofia memetakan nilai dan mempertahankan struktur template", async () => {
   await prisma.$connect();
   const golden = JSON.parse(await readFile(new URL("./fixtures/queen-sofia-xlsx.golden.json", import.meta.url), "utf8")) as Golden;
   const templatePath = path.resolve(process.cwd(), env.SEALING_XLSX_TEMPLATE_PATH);
@@ -130,6 +130,7 @@ test("XLSX resmi Queen Sofia memetakan nilai dan mempertahankan struktur templat
     const preview = await fetch(`${api}/reports/${report.id}/xlsx/preview`, { headers: authorizationHeaders(admin.accessToken) });
     assert.equal(preview.status, 200);
     assert.match(preview.headers.get("content-disposition") ?? "", /^inline;/);
+    assert.equal(preview.headers.get("x-checksum-sha256"), generated.data.checksumSha256);
     const output = Buffer.from(await preview.arrayBuffer());
     assert.equal(sha256(output), generated.data.checksumSha256);
     const download = await fetch(`${api}/voyages/${report.id}/xlsx/download`, { headers: authorizationHeaders(admin.accessToken) });
@@ -170,6 +171,11 @@ test("XLSX resmi Queen Sofia memetakan nilai dan mempertahankan struktur templat
     assert.match(await overflowZip.file("xl/workbook.xml")!.async("string"), /Segel Lanjutan 1/);
     assert.ok(overflowZip.file("xl/printerSettings/printerSettings2.bin"));
     assert.ok(overflowZip.file("xl/drawings/drawing2.xml"));
+
+    await writeFile(exportFile, Buffer.alloc(output.length, 0x58));
+    const corruptedPreview = await fetch(`${api}/reports/${report.id}/xlsx/preview`, { headers: authorizationHeaders(admin.accessToken) });
+    assert.equal(corruptedPreview.status, 409, "Preview XLSX wajib menolak byte-stream dengan checksum berbeda");
+    await writeFile(exportFile, output);
 
     const draft = await prisma.sealingReport.create({ data: { reportNo: `DRAFT-XLSX-${suffix}`, vesselId: vessel.id, createdById: admin.user.id, reportDateTime: new Date(), status: "DRAFT" } });
     const rejected = await fetch(`${api}/reports/${draft.id}/xlsx`, { method: "POST", headers: authorizationHeaders(admin.accessToken) });

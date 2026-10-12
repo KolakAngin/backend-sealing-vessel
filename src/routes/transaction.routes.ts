@@ -52,6 +52,12 @@ transactionRouter.post("/shipments/:id/finalize", unloaders, validateRequest(sch
 transactionRouter.get("/shipments/:id/validation", validateRequest(schema.lifecycleValidationRequest), controller.validateReportLifecycle);
 transactionRouter.post("/shipments/:id/prepare-seals", loaders, validateRequest(schema.prepareReportSealsRequest), controller.prepareReportSeals);
 
+// Alias reports/voyages/shipments menggunakan satu service canonical yang sama.
+// Report legacy ditolak oleh service agar field Plant-Jetty tidak bercampur dengan Terminal.
+for (const resource of ["reports", "voyages", "shipments"] as const) {
+  transactionRouter.put(`/${resource}/:id/destination-assignment`, loaders, validateRequest(schema.destinationAssignmentRequest), controller.assignShipmentDestination);
+}
+
 // Pengisian form A-H memakai snapshot laporan. Ketiga prefix dipertahankan
 // karena Shipment/Voyage menggunakan aggregate SealingReport yang sama.
 for (const resource of ["reports", "voyages", "shipments"] as const) {
@@ -62,16 +68,17 @@ for (const resource of ["reports", "voyages", "shipments"] as const) {
   transactionRouter.put(`/${resource}/:reportId/form/sections/:sectionCode`, loaders, validateRequest(schema.batchFormSectionRequest), controller.batchWriteReportFormSection);
 }
 
-// PDF final disimpan sebagai satu artefak immutable. Preview dan download
-// selalu membaca byte-stream yang sama, bukan menjalankan renderer ulang.
+// Compatibility facade: report historis tanpa dokumen BA memakai PdfArtifact
+// legacy; shipment phase-aware memakai artefak BA UNLOADING yang sama dengan
+// endpoint canonical dan tidak membuat PdfArtifact kedua.
 for (const resource of ["reports", "voyages", "shipments"] as const) {
   transactionRouter.post(`/${resource}/:reportId/pdf`, pdfGenerators, validateRequest(schema.reportPdfRequest), controller.generateReportPdf);
   transactionRouter.get(`/${resource}/:reportId/pdf/preview`, validateRequest(schema.reportPdfRequest), controller.previewReportPdf);
   transactionRouter.get(`/${resource}/:reportId/pdf/download`, validateRequest(schema.reportPdfRequest), controller.downloadReportPdf);
 }
 
-// Generator resmi hanya membaca finalSnapshot. Ketiga alias memakai artefak
-// yang sama karena Shipment/Voyage dan SealingReport adalah aggregate yang sama.
+// XLSX adalah export operasional/legacy dari finalSnapshot, bukan artefak BA.
+// Ketiga alias memakai generator yang sama karena aggregate-nya sama.
 for (const resource of ["reports", "voyages", "shipments"] as const) {
   transactionRouter.post(`/${resource}/:reportId/xlsx`, xlsxGenerators, validateRequest(schema.reportXlsxRequest), controller.generateReportXlsx);
   transactionRouter.get(`/${resource}/:reportId/xlsx/preview`, validateRequest(schema.reportXlsxRequest), controller.previewReportXlsx);
@@ -101,6 +108,16 @@ for (const resource of ["reports", "voyages", "shipments"] as const) {
   transactionRouter.get(`/${resource}/:reportId/signatures`, validateRequest(schema.listSignaturesRequest), controller.listSignatures);
   transactionRouter.post(`/${resource}/:reportId/signatures`, signatureWriters, validateRequest(schema.createSignatureRequest), controller.createSignature);
   transactionRouter.put(`/${resource}/:reportId/signatures/:role`, signatureWriters, validateRequest(schema.upsertSignatureRequest), controller.upsertSignature);
+  transactionRouter.get(`/${resource}/:reportId/ba/:phase`, validateRequest(schema.baDocumentRequest), controller.getBaDocument);
+  transactionRouter.post(`/${resource}/:reportId/ba/:phase/finalize`, signatureWriters, validateRequest(schema.finalizeBaDocumentRequest), controller.finalizeBaDocument);
+  transactionRouter.post(`/${resource}/:reportId/ba/loading/pdf`, loaders, validateRequest(schema.reportPdfRequest), controller.generateLoadingBaPdf);
+  transactionRouter.get(`/${resource}/:reportId/ba/loading/pdf/preview`, loaders, validateRequest(schema.reportPdfRequest), controller.previewLoadingBaPdf);
+  transactionRouter.get(`/${resource}/:reportId/ba/loading/pdf/download`, loaders, validateRequest(schema.reportPdfRequest), controller.downloadLoadingBaPdf);
+  transactionRouter.post(`/${resource}/:reportId/ba/unloading/pdf`, unloaders, validateRequest(schema.reportPdfRequest), controller.generateUnloadingBaPdf);
+  transactionRouter.get(`/${resource}/:reportId/ba/unloading/pdf/preview`, unloaders, validateRequest(schema.reportPdfRequest), controller.previewUnloadingBaPdf);
+  transactionRouter.get(`/${resource}/:reportId/ba/unloading/pdf/download`, unloaders, validateRequest(schema.reportPdfRequest), controller.downloadUnloadingBaPdf);
+  transactionRouter.get(`/${resource}/:reportId/ba/:phase/signatures`, validateRequest(schema.listBaSignaturesRequest), controller.listBaSignatures);
+  transactionRouter.put(`/${resource}/:reportId/ba/:phase/signatures/:role`, signatureWriters, validateRequest(schema.upsertBaSignatureRequest), controller.upsertBaSignature);
 }
 transactionRouter.get("/signatures/:id", validateRequest(schema.signatureDetailRequest), controller.getSignature);
 transactionRouter.patch("/signatures/:id", signatureWriters, validateRequest(schema.updateSignatureRequest), controller.updateSignature);

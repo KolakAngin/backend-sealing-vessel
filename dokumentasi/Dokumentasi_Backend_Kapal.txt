@@ -313,14 +313,21 @@ Endpoint canonical:
 - PATCH  /shipments/:id atau /voyages/:id
 - DELETE /shipments/:id atau /voyages/:id
 - POST   /shipments/:id/prepare-seals atau /voyages/:id/prepare-seals
+- PUT    /shipments/:id/destination-assignment atau /voyages/:id/destination-assignment
 - GET    /shipments/:id/validation atau /voyages/:id/validation
 - POST   /shipments/:id/finalize atau /voyages/:id/finalize
 
 Create canonical mewajibkan vesselId, activityId, reportDateTime, voyageNumber,
-shipmentNumber, productId, loadingPlantId, loadingJettyId, dischargePlantId,
-dischargeJettyId, dan sealingStatus. Seluruh master harus aktif; Activity harus
-LOADING, DISCHARGE, atau ROB; serta kedua pasangan Plant-Jetty harus mempunyai
-assignment. shipmentNumber unik. sealingStatus terpisah dari status perjalanan.
+shipmentNumber, productId, loadingPlantId, dan loadingJettyId. Destination
+dischargePlantId/dischargeJettyId boleh kosong; jika dikirim harus lengkap sebagai
+pasangan aktif dengan PlantJettyAssignment yang valid. Destination yang ditunda
+hanya dapat dipilih oleh assigned LOADING_MASTER, SUPERVISOR, atau ADMIN setelah
+sealingProcessStatus READY dan selama status DRAFT. UNLOADING_MASTER tidak dapat
+memilih destination. PATCH umum tidak menerima perubahan destination. Depart
+mewajibkan destination lengkap/valid, dan setelah depart destination terkunci.
+Setiap assignment menyimpan audit actor, nilai lama, nilai baru, dan waktu.
+Activity harus LOADING, DISCHARGE, atau ROB. shipmentNumber unik. sealingStatus
+terpisah dari status perjalanan.
 sealingProcessStatus dikelola server dengan nilai NOT_STARTED, IN_PROGRESS,
 READY, IN_TRANSIT, VERIFICATION, dan FINALIZED. loadingMasterId merupakan
 assignment operasional terpisah dari createdById; unloadingMasterId wajib
@@ -347,7 +354,10 @@ status, catatan, dan seluruh nomor segel. PUT/PATCH/DELETE/batch hanya diizinkan
 ketika DRAFT. Satu compartment dapat mempunyai beberapa point termasuk lima
 point Bagian A, dan satu equipment dapat mempunyai beberapa nomor segel.
 Section tidak tersedia, termasuk G, tidak dapat diisi. Nomor segel dinormalisasi
-uppercase dan mengikuti unique global database. Detail:
+uppercase dan unik hanya di dalam shipment/sealing report yang sama. Nomor yang
+sama dapat dipakai pada shipment berbeda, sedangkan nomor REMOVED/REPLACED
+tetap menjadi riwayat dan tidak dapat dipakai pada titik lain di shipment yang
+sama. Detail:
 dokumentasi/API_FORM_A_H_ENTRY.md.
 
 Assignment Plant-Jetty:
@@ -432,6 +442,25 @@ Kondisi verifikasi: GOOD, DAMAGED, BROKEN, MISSING, OTHER.
 - DELETE /signatures/:id
 
 Role tanda tangan: CHIEF_OFFICER, TERMINAL_REPRESENTATIVE, SURVEYOR.
+
+Berita Acara phase-aware:
+- GET  /shipments|voyages|reports/:reportId/ba/:phase
+- GET  /shipments|voyages|reports/:reportId/ba/:phase/signatures
+- PUT  /shipments|voyages|reports/:reportId/ba/:phase/signatures/:role
+- POST /shipments|voyages|reports/:reportId/ba/:phase/finalize
+
+Phase bernilai LOADING atau UNLOADING. Setiap phase mempunyai dokumen, snapshot,
+actor/waktu finalisasi, tiga slot signature, dan relasi artefak PDF tersendiri.
+BA LOADING dikelola assigned LOADING_MASTER/SUPERVISOR/ADMIN saat DRAFT dan
+hanya dapat difinalisasi setelah sealing READY. BA UNLOADING dikelola assigned
+UNLOADING_MASTER/SUPERVISOR/ADMIN saat SANDAR. Finalisasi UNLOADING memerlukan
+BA LOADING final, verification seluruh segel aktif dari snapshot LOADING, dan
+ketiga role UNLOADING. Snapshot memisahkan foto loading immutable dan foto
+verification unloading. Verification, foto, dan signature UNLOADING kemudian
+dikunci. Transition FINISH canonical memerlukan BA UNLOADING final dan memakai
+snapshot tersebut sebagai finalSnapshot. Signature legacy tetap phase NULL dan
+alur laporan historis non-canonical tetap dipertahankan. Detail:
+dokumentasi/API_BERITA_ACARA_PHASE.md.
 
 6.12 Audit log
 
@@ -572,7 +601,7 @@ jika transaksi database gagal. Metadata attachment dan signature ikut masuk
 ke finalSnapshot. Detail kontrak ada di API_DOCUMENTATION_SIGNATURE.md.
 
 ======================================================================
-11. STEP 9 - GENERATOR XLSX RESMI
+11. STEP 9 - EXPORT XLSX OPERASIONAL/LEGACY
 ======================================================================
 
 Generator memakai template Form Segel Baru sesuai TKO (edit1).xlsx dengan
@@ -583,6 +612,10 @@ POST /reports|voyages|shipments/:reportId/xlsx membuat artefak dari finalSnapsho
 laporan FINISH. GET .../xlsx/preview menampilkan inline dan GET .../xlsx/download
 mengunduh file. Hasil menyertakan header shipment, A-H dinamis, nomor segel,
 NOT_APPLICABLE, serta nama/gambar tanda tangan.
+
+XLSX bukan Berita Acara resmi dan tidak mempunyai artefak per phase. Untuk
+shipment phase-aware, finalSnapshot adalah salinan snapshot BA UNLOADING dan
+export memilih tiga loadingSignatures untuk form segel operasional.
 
 Overflow dibuat sebagai worksheet Segel Lanjutan N yang mengklon layout resmi.
 Logo, merge, style, ukuran row/column, margin, orientasi, page break, calc chain,
@@ -606,6 +639,10 @@ POST /reports|voyages|shipments/:reportId/pdf membuat dan menyimpan satu
 PdfArtifact per report FINISH. GET .../pdf/preview dan .../pdf/download membaca
 byte-stream yang sama setelah pemeriksaan ukuran dan checksum; generate berulang
 tidak merender ulang. Overflow memakai salinan set tiga halaman resmi.
+
+Ketentuan PdfArtifact di atas hanya berlaku bagi laporan historis tanpa dokumen
+phase-aware. Untuk shipment dengan BA UNLOADING final, endpoint /pdf adalah alias
+ke BeritaAcaraPdfArtifact UNLOADING dan tidak membuat PdfArtifact kedua.
 
 Foto opsional JPEG/PNG/WebP dari report, section, sealing record, atau verification
 ditambahkan sesudah form sebagai appendix A4 3 x 3, dengan caption dan urutan.

@@ -35,13 +35,7 @@ import type {
   UpdateVesselPointInput,
 } from "../schemas/master-data.schema.js";
 import { AppError } from "../utils/app-error.js";
-
-const pagination = (page: number, limit: number, total: number) => ({
-  page,
-  limit,
-  total,
-  totalPages: Math.ceil(total / limit),
-});
+import { resolvePagination } from "../utils/pagination.js";
 
 function dynamicOrderBy<T>(field: string, direction: "asc" | "desc"): T {
   return { [field]: direction } as T;
@@ -68,6 +62,21 @@ const masterAudit = (actorId: string, action: AuditAction, entityType: string, e
     ...(newData === undefined ? {} : { newData: asJson(newData) }),
   },
 });
+const activeVesselRelationCounts = {
+  compartments: { where: { isActive: true } },
+  sealingPoints: {
+    where: {
+      isActive: true,
+      availability: "AVAILABLE",
+      sealingPointTemplate: {
+        isActive: true,
+        category: { isActive: true, code: { in: tkoSectionCodes } },
+      },
+      OR: [{ compartmentId: null }, { compartment: { isActive: true } }],
+    },
+  },
+  sealingReports: true,
+} satisfies Prisma.VesselCountOutputTypeSelect;
 
 /**
  * Menjaga VesselFormProfile sebagai proyeksi eksplisit dari konfigurasi point
@@ -164,9 +173,10 @@ export async function listPlants(query: ListPlantsInput) {
       { name: { contains: query.search, mode: "insensitive" } },
     ] } : {}),
   };
-  const items = await prisma.plant.findMany({ where, skip: (query.page - 1) * query.limit, take: query.limit, orderBy: dynamicOrderBy<Prisma.PlantOrderByWithRelationInput>(query.sortBy, query.sortOrder) });
   const total = await prisma.plant.count({ where });
-  return { items, pagination: pagination(query.page, query.limit, total) };
+  const pagination = resolvePagination(query.page, query.limit, total);
+  const items = await prisma.plant.findMany({ where, skip: pagination.skip, take: pagination.take, orderBy: [dynamicOrderBy<Prisma.PlantOrderByWithRelationInput>(query.sortBy, query.sortOrder), { id: "asc" }] });
+  return { items, pagination: pagination.meta };
 }
 
 export async function getPlant(id: string) {
@@ -184,9 +194,10 @@ export async function listJetties(query: ListJettiesInput) {
     ...(query.isActive === undefined ? {} : { isActive: query.isActive }),
     ...(query.search ? { name: { contains: query.search, mode: "insensitive" } } : {}),
   };
-  const items = await prisma.jetty.findMany({ where, skip: (query.page - 1) * query.limit, take: query.limit, orderBy: dynamicOrderBy<Prisma.JettyOrderByWithRelationInput>(query.sortBy, query.sortOrder) });
   const total = await prisma.jetty.count({ where });
-  return { items, pagination: pagination(query.page, query.limit, total) };
+  const pagination = resolvePagination(query.page, query.limit, total);
+  const items = await prisma.jetty.findMany({ where, skip: pagination.skip, take: pagination.take, orderBy: [dynamicOrderBy<Prisma.JettyOrderByWithRelationInput>(query.sortBy, query.sortOrder), { id: "asc" }] });
+  return { items, pagination: pagination.meta };
 }
 
 export async function getJetty(id: string) {
@@ -207,9 +218,10 @@ export async function listActivities(query: ListActivitiesInput) {
       { name: { contains: query.search, mode: "insensitive" } },
     ] } : {}),
   };
-  const items = await prisma.activity.findMany({ where, skip: (query.page - 1) * query.limit, take: query.limit, orderBy: dynamicOrderBy<Prisma.ActivityOrderByWithRelationInput>(query.sortBy, query.sortOrder) });
   const total = await prisma.activity.count({ where });
-  return { items, pagination: pagination(query.page, query.limit, total) };
+  const pagination = resolvePagination(query.page, query.limit, total);
+  const items = await prisma.activity.findMany({ where, skip: pagination.skip, take: pagination.take, orderBy: [dynamicOrderBy<Prisma.ActivityOrderByWithRelationInput>(query.sortBy, query.sortOrder), { id: "asc" }] });
+  return { items, pagination: pagination.meta };
 }
 
 export async function getActivity(id: string) {
@@ -227,9 +239,10 @@ export async function listProducts(query: ListProductsInput) {
     ...(query.isActive === undefined ? {} : { isActive: query.isActive }),
     ...(query.search ? { name: { contains: query.search, mode: "insensitive" } } : {}),
   };
-  const items = await prisma.product.findMany({ where, skip: (query.page - 1) * query.limit, take: query.limit, orderBy: dynamicOrderBy<Prisma.ProductOrderByWithRelationInput>(query.sortBy, query.sortOrder) });
   const total = await prisma.product.count({ where });
-  return { items, pagination: pagination(query.page, query.limit, total) };
+  const pagination = resolvePagination(query.page, query.limit, total);
+  const items = await prisma.product.findMany({ where, skip: pagination.skip, take: pagination.take, orderBy: [dynamicOrderBy<Prisma.ProductOrderByWithRelationInput>(query.sortBy, query.sortOrder), { id: "asc" }] });
+  return { items, pagination: pagination.meta };
 }
 
 export async function getProduct(id: string) {
@@ -247,9 +260,10 @@ export async function listUnitsOfMeasure(query: ListUnitsOfMeasureInput) {
     ...(query.isActive === undefined ? {} : { isActive: query.isActive }),
     ...(query.search ? { code: { contains: query.search, mode: "insensitive" } } : {}),
   };
-  const items = await prisma.unitOfMeasure.findMany({ where, skip: (query.page - 1) * query.limit, take: query.limit, orderBy: dynamicOrderBy<Prisma.UnitOfMeasureOrderByWithRelationInput>(query.sortBy, query.sortOrder) });
   const total = await prisma.unitOfMeasure.count({ where });
-  return { items, pagination: pagination(query.page, query.limit, total) };
+  const pagination = resolvePagination(query.page, query.limit, total);
+  const items = await prisma.unitOfMeasure.findMany({ where, skip: pagination.skip, take: pagination.take, orderBy: [dynamicOrderBy<Prisma.UnitOfMeasureOrderByWithRelationInput>(query.sortBy, query.sortOrder), { id: "asc" }] });
+  return { items, pagination: pagination.meta };
 }
 
 export async function getUnitOfMeasure(id: string) {
@@ -274,13 +288,14 @@ export async function listVessels(query: ListVesselsInput) {
       { flag: { contains: query.search, mode: "insensitive" } },
     ] } : {}),
   };
-  const items = await prisma.vessel.findMany({ where, skip: (query.page - 1) * query.limit, take: query.limit, orderBy: dynamicOrderBy<Prisma.VesselOrderByWithRelationInput>(query.sortBy, query.sortOrder), include: { _count: { select: { compartments: true, sealingPoints: true, sealingReports: true } } } });
   const total = await prisma.vessel.count({ where });
-  return { items, pagination: pagination(query.page, query.limit, total) };
+  const pagination = resolvePagination(query.page, query.limit, total);
+  const items = await prisma.vessel.findMany({ where, skip: pagination.skip, take: pagination.take, orderBy: [dynamicOrderBy<Prisma.VesselOrderByWithRelationInput>(query.sortBy, query.sortOrder), { id: "asc" }], include: { _count: { select: activeVesselRelationCounts } } });
+  return { items, pagination: pagination.meta };
 }
 
 export async function getVessel(id: string) {
-  const item = await prisma.vessel.findUnique({ where: { id }, include: { _count: { select: { compartments: true, sealingPoints: true, sealingReports: true } } } });
+  const item = await prisma.vessel.findUnique({ where: { id }, include: { _count: { select: activeVesselRelationCounts } } });
   if (!item) throw new AppError(404, "Vessel tidak ditemukan");
   return item;
 }
@@ -353,9 +368,10 @@ export async function listCompartments(query: ListCompartmentsInput) {
       { description: { contains: query.search, mode: "insensitive" } },
     ] } : {}),
   };
-  const items = await prisma.compartment.findMany({ where, skip: (query.page - 1) * query.limit, take: query.limit, orderBy: dynamicOrderBy<Prisma.CompartmentOrderByWithRelationInput>(query.sortBy, query.sortOrder), include: { vessel: { select: { id: true, name: true } } } });
   const total = await prisma.compartment.count({ where });
-  return { items, pagination: pagination(query.page, query.limit, total) };
+  const pagination = resolvePagination(query.page, query.limit, total);
+  const items = await prisma.compartment.findMany({ where, skip: pagination.skip, take: pagination.take, orderBy: [dynamicOrderBy<Prisma.CompartmentOrderByWithRelationInput>(query.sortBy, query.sortOrder), { id: "asc" }], include: { vessel: { select: { id: true, name: true } } } });
+  return { items, pagination: pagination.meta };
 }
 
 export async function getCompartment(id: string) {
@@ -413,9 +429,10 @@ export async function listCategories(query: ListCategoriesInput) {
       { description: { contains: query.search, mode: "insensitive" } },
     ] } : {}),
   };
-  const items = await prisma.sealingCategory.findMany({ where, skip: (query.page - 1) * query.limit, take: query.limit, orderBy: dynamicOrderBy<Prisma.SealingCategoryOrderByWithRelationInput>(query.sortBy, query.sortOrder), include: { _count: { select: { sealingPointTemplates: true } } } });
   const total = await prisma.sealingCategory.count({ where });
-  return { items, pagination: pagination(query.page, query.limit, total) };
+  const pagination = resolvePagination(query.page, query.limit, total);
+  const items = await prisma.sealingCategory.findMany({ where, skip: pagination.skip, take: pagination.take, orderBy: [dynamicOrderBy<Prisma.SealingCategoryOrderByWithRelationInput>(query.sortBy, query.sortOrder), { id: "asc" }], include: { _count: { select: { sealingPointTemplates: true } } } });
+  return { items, pagination: pagination.meta };
 }
 
 export async function getCategory(id: string) {
@@ -440,9 +457,10 @@ export async function listTemplates(query: ListTemplatesInput) {
       { description: { contains: query.search, mode: "insensitive" } },
     ] } : {}),
   };
-  const items = await prisma.sealingPointTemplate.findMany({ where, skip: (query.page - 1) * query.limit, take: query.limit, orderBy: dynamicOrderBy<Prisma.SealingPointTemplateOrderByWithRelationInput>(query.sortBy, query.sortOrder), include: { category: { select: { id: true, code: true, name: true } } } });
   const total = await prisma.sealingPointTemplate.count({ where });
-  return { items, pagination: pagination(query.page, query.limit, total) };
+  const pagination = resolvePagination(query.page, query.limit, total);
+  const items = await prisma.sealingPointTemplate.findMany({ where, skip: pagination.skip, take: pagination.take, orderBy: [dynamicOrderBy<Prisma.SealingPointTemplateOrderByWithRelationInput>(query.sortBy, query.sortOrder), { id: "asc" }], include: { category: { select: { id: true, code: true, name: true } } } });
+  return { items, pagination: pagination.meta };
 }
 
 export async function getTemplate(id: string) {
@@ -499,9 +517,10 @@ export async function listVesselPoints(query: ListVesselPointsInput) {
       { locationName: { contains: query.search, mode: "insensitive" } },
     ] } : {}),
   };
-  const items = await prisma.vesselSealingPoint.findMany({ where, skip: (query.page - 1) * query.limit, take: query.limit, orderBy: dynamicOrderBy<Prisma.VesselSealingPointOrderByWithRelationInput>(query.sortBy, query.sortOrder), include: { vessel: { select: { id: true, name: true } }, sealingPointTemplate: { select: { id: true, code: true, name: true } }, compartment: { select: { id: true, code: true, name: true } } } });
   const total = await prisma.vesselSealingPoint.count({ where });
-  return { items, pagination: pagination(query.page, query.limit, total) };
+  const pagination = resolvePagination(query.page, query.limit, total);
+  const items = await prisma.vesselSealingPoint.findMany({ where, skip: pagination.skip, take: pagination.take, orderBy: [dynamicOrderBy<Prisma.VesselSealingPointOrderByWithRelationInput>(query.sortBy, query.sortOrder), { id: "asc" }], include: { vessel: { select: { id: true, name: true } }, sealingPointTemplate: { select: { id: true, code: true, name: true } }, compartment: { select: { id: true, code: true, name: true } } } });
+  return { items, pagination: pagination.meta };
 }
 
 export async function getVesselPoint(id: string) {

@@ -335,7 +335,7 @@ Keputusan berikut belum mempunyai data pasti:
 10. Apakah `Wilden Pump` perlu ditambahkan sebagai equipment terpisah/alias selain `Pintu Pumproom`.
 11. Apakah jumlah slot statis Excel adalah batas maksimum, minimum, atau hanya layout contoh ketika konfigurasi vessel mempunyai lebih banyak titik/seal.
 12. Aturan snapshot master vessel/titik sealing pada voyage historis.
-13. Format nomor segel, apakah prefix `W.` merupakan bagian nilai, dan apakah nomor harus unik secara global.
+13. Format nomor segel dan apakah prefix `W.` merupakan bagian nilai masih belum ditentukan sumber. Scope keunikan sudah diputuskan melalui revisi bisnis Oktober 2026: nomor unik per shipment, bukan global.
 14. Aturan ekspor: penamaan file, locale/tanggal, pembulatan ukuran, scaling, QR/barcode, metadata dokumen, tanda tangan digital/gambar, dan penggabungan lampiran.
 15. Apakah label/caption foto harus memilih vocabulary baku atau mempertahankan input lapangan.
 

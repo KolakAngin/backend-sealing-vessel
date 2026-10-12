@@ -112,6 +112,16 @@ enum SignatureRole {
   SURVEYOR
 }
 
+enum BeritaAcaraPhase {
+  LOADING
+  UNLOADING
+}
+
+enum BeritaAcaraStatus {
+  DRAFT
+  FINALIZED
+}
+
 enum AuditAction {
   CREATE
   UPDATE
@@ -271,16 +281,18 @@ model User {
   createdAt DateTime @default(now()) @db.Timestamptz(3)
   updatedAt DateTime @updatedAt @db.Timestamptz(3)
 
-  createdReports        SealingReport[]    @relation("LoadingMaster")
-  loadingAssignments    SealingReport[]    @relation("AssignedLoadingMaster")
-  unloadingAssignments  SealingReport[]    @relation("UnloadingMaster")
-  finalizedReports      SealingReport[]    @relation("FinalizedBy")
-  createdRecords        SealingRecord[]
-  verifications         SealVerification[]
-  uploadedFiles         Attachment[]
-  signatures            ReportSignature[]
-  generatedPdfArtifacts PdfArtifact[]
-  auditLogs             AuditLog[]
+  createdReports          SealingReport[]          @relation("LoadingMaster")
+  loadingAssignments      SealingReport[]          @relation("AssignedLoadingMaster")
+  unloadingAssignments    SealingReport[]          @relation("UnloadingMaster")
+  finalizedReports        SealingReport[]          @relation("FinalizedBy")
+  finalizedBaDocuments    BeritaAcaraDocument[]    @relation("BaDocumentFinalizedBy")
+  createdRecords          SealingRecord[]
+  verifications           SealVerification[]
+  uploadedFiles           Attachment[]
+  signatures              ReportSignature[]
+  generatedPdfArtifacts   PdfArtifact[]
+  generatedBaPdfArtifacts BeritaAcaraPdfArtifact[]
+  auditLogs               AuditLog[]
 
   @@index([role])
   @@index([isActive])
@@ -725,6 +737,7 @@ model SealingReport {
   signatures     ReportSignature[]
   attachments    Attachment[]
   pdfArtifact    PdfArtifact?
+  baDocuments    BeritaAcaraDocument[]
 
   @@index([vesselId])
   @@index([originTerminalId])
@@ -796,6 +809,9 @@ model SealingRecord {
   // Bisa 0, 1, atau banyak.
   attachments Attachment[]
 
+  // Dipakai oleh foreign key komposit Seal agar sealingReportId yang
+  // didenormalisasi selalu sama dengan shipment milik record.
+  @@unique([id, sealingReportId])
   @@unique([sealingReportId, vesselSealingPointId])
   @@index([sealingReportId])
   @@index([vesselSealingPointId])
@@ -814,8 +830,11 @@ model Seal {
   id String @id @default(uuid()) @db.Uuid
 
   sealingRecordId String @db.Uuid
+  sealingReportId String @db.Uuid
 
-  sealNumber String @unique @db.VarChar(100)
+  // Dinormalisasi trim + uppercase oleh API dan migration. Nomor hanya unik
+  // di dalam satu shipment/sealing report, bukan secara global.
+  sealNumber String @db.VarChar(100)
 
   status SealStatus @default(INSTALLED)
 
@@ -827,11 +846,13 @@ model Seal {
   createdAt DateTime @default(now()) @db.Timestamptz(3)
   updatedAt DateTime @updatedAt @db.Timestamptz(3)
 
-  sealingRecord SealingRecord @relation(fields: [sealingRecordId], references: [id], onDelete: Cascade)
+  sealingRecord SealingRecord @relation(fields: [sealingRecordId, sealingReportId], references: [id, sealingReportId], onDelete: Cascade)
 
   verifications SealVerification[]
 
+  @@unique([sealingReportId, sealNumber])
   @@index([sealingRecordId])
+  @@index([sealingReportId])
   @@index([status])
   @@index([installedAt])
   @@map("seal")
@@ -966,6 +987,11 @@ model ReportSignature {
 
   sealingReportId String @db.Uuid
 
+  // NULL menandai slot signature legacy. Data historis tidak diberi phase
+  // secara spekulatif; endpoint BA baru selalu mengisi kedua field ini.
+  phase        BeritaAcaraPhase?
+  baDocumentId String?           @db.Uuid
+
   // Optional karena Chief Officer / Surveyor
   // mungkin bukan user aplikasi.
   userId String? @db.Uuid
@@ -991,12 +1017,76 @@ model ReportSignature {
 
   sealingReport SealingReport @relation(fields: [sealingReportId], references: [id], onDelete: Cascade)
 
+  baDocument BeritaAcaraDocument? @relation(fields: [baDocumentId, sealingReportId, phase], references: [id, sealingReportId, phase], onDelete: Cascade)
+
   user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
 
-  @@unique([sealingReportId, role])
+  @@unique([sealingReportId, phase, role])
   @@index([userId])
+  @@index([baDocumentId])
+  @@index([sealingReportId, phase])
   @@index([sealingReportId, signedAt])
   @@map("report_signature")
+}
+
+// ======================================================
+// BERITA ACARA DOCUMENT
+//
+// Satu dokumen immutable per shipment dan phase. Dokumen legacy tetap
+// berada pada SealingReport.finalSnapshot dan tidak di-backfill ke sini.
+// ======================================================
+
+model BeritaAcaraDocument {
+  id String @id @default(uuid()) @db.Uuid
+
+  sealingReportId String            @db.Uuid
+  phase           BeritaAcaraPhase
+  status          BeritaAcaraStatus @default(DRAFT)
+  snapshot        Json?
+  snapshotVersion Int               @default(1)
+  finalizedById   String?           @db.Uuid
+  finalizedAt     DateTime?         @db.Timestamptz(3)
+  createdAt       DateTime          @default(now()) @db.Timestamptz(3)
+  updatedAt       DateTime          @updatedAt @db.Timestamptz(3)
+
+  sealingReport SealingReport           @relation(fields: [sealingReportId], references: [id], onDelete: Cascade)
+  finalizedBy   User?                   @relation("BaDocumentFinalizedBy", fields: [finalizedById], references: [id], onDelete: Restrict)
+  signatures    ReportSignature[]
+  pdfArtifact   BeritaAcaraPdfArtifact?
+
+  @@unique([sealingReportId, phase])
+  @@unique([id, sealingReportId, phase])
+  @@index([finalizedById])
+  @@index([status])
+  @@map("berita_acara_document")
+}
+
+// Artefak PDF phase-aware. Generator BA akan mengisi tabel ini pada tahap
+// berikutnya; PdfArtifact lama tetap menjadi artefak final legacy.
+model BeritaAcaraPdfArtifact {
+  id String @id @default(uuid()) @db.Uuid
+
+  baDocumentId  String @unique @db.Uuid
+  generatedById String @db.Uuid
+
+  fileName   String @db.VarChar(255)
+  storageKey String @unique @db.Text
+  mimeType   String @default("application/pdf") @db.VarChar(100)
+  fileSize   BigInt
+
+  checksumSha256         String   @db.VarChar(64)
+  snapshotChecksumSha256 String   @db.VarChar(64)
+  rendererVersion        String   @db.VarChar(50)
+  metadata               Json?
+  generatedAt            DateTime @default(now()) @db.Timestamptz(3)
+
+  baDocument  BeritaAcaraDocument @relation(fields: [baDocumentId], references: [id], onDelete: Cascade)
+  generatedBy User                @relation(fields: [generatedById], references: [id], onDelete: Restrict)
+
+  @@index([generatedById])
+  @@index([checksumSha256])
+  @@index([generatedAt])
+  @@map("berita_acara_pdf_artifact")
 }
 
 // ======================================================

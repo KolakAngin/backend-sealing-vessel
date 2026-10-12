@@ -1,11 +1,13 @@
 import type { NextFunction, Request, Response } from "express";
 
 import { getValidatedInput } from "../middleware/validate-request.js";
-import type { CreatePlantJettyAssignmentInput, CreateRecordInput, CreateReportInput, CreateSealInput, CreateShipmentInput, FormPointPatchInput, FormPointWriteInput, FormSectionBatchInput, ListAuditsInput, ListPlantJettyAssignmentsInput, ListReportsInput, SignatureInput, UpsertSignatureInput, UpdateRecordInput, UpdateReportInput, UpdateSealInput, UpdateShipmentInput, UpdateSignatureInput, VerifySealInput } from "../schemas/transaction.schema.js";
+import type { BeritaAcaraPhaseInput, CreatePlantJettyAssignmentInput, CreateRecordInput, CreateReportInput, CreateSealInput, CreateShipmentInput, DestinationAssignmentInput, FormPointPatchInput, FormPointWriteInput, FormSectionBatchInput, ListAuditsInput, ListPlantJettyAssignmentsInput, ListReportsInput, SignatureInput, UpsertSignatureInput, UpdateRecordInput, UpdateReportInput, UpdateSealInput, UpdateShipmentInput, UpdateSignatureInput, VerifySealInput } from "../schemas/transaction.schema.js";
 import * as service from "../services/transaction.service.js";
 import * as signatureService from "../services/signature.service.js";
 import * as xlsxExportService from "../services/xlsx-export.service.js";
 import * as pdfExportService from "../services/pdf-export.service.js";
+import * as baPdfExportService from "../services/ba-pdf-export.service.js";
+import * as finalDocumentExportService from "../services/final-document-export.service.js";
 import { AppError } from "../utils/app-error.js";
 import { sendSuccess } from "../utils/api-response.js";
 
@@ -21,6 +23,7 @@ export async function updateReport(req: Request, res: Response) { const { params
 export async function deleteReport(req: Request, res: Response) { const { params } = getValidatedInput<{ params: { id: string } }>(res); sendSuccess(res, 200, "Laporan berhasil dihapus", await service.deleteReport(params.id, actor(req))); }
 export async function createShipment(req: Request, res: Response) { const { body } = getValidatedInput<{ body: CreateShipmentInput }>(res); sendSuccess(res, 201, "Shipment/voyage berhasil dibuat", await service.createShipment(body, actor(req))); }
 export async function updateShipment(req: Request, res: Response) { const { params, body } = getValidatedInput<{ params: { id: string }; body: UpdateShipmentInput }>(res); sendSuccess(res, 200, "Shipment/voyage berhasil diperbarui", await service.updateShipment(params.id, body, actor(req))); }
+export async function assignShipmentDestination(req: Request, res: Response) { const { params, body } = getValidatedInput<{ params: { id: string }; body: DestinationAssignmentInput }>(res); sendSuccess(res, 200, "Destination shipment/voyage berhasil ditetapkan", await service.assignShipmentDestination(params.id, body, actor(req))); }
 export async function deleteShipment(req: Request, res: Response) { const { params } = getValidatedInput<{ params: { id: string } }>(res); sendSuccess(res, 200, "Shipment/voyage berhasil dihapus", await service.deleteShipment(params.id, actor(req))); }
 export const transitionReport = (transition: "depart" | "arrive" | "finish") => async (req: Request, res: Response) => { const { params, body } = getValidatedInput<{ params: { id: string }; body: { occurredAt?: Date; remarks?: string | null } }>(res); sendSuccess(res, 200, `Status perjalanan berhasil diubah menjadi ${transition === "depart" ? "BERLAYAR" : transition === "arrive" ? "SANDAR" : "FINISH"}`, await service.transitionReport(params.id, transition, body.occurredAt, body.remarks, actor(req))); };
 export async function validateReportLifecycle(req: Request, res: Response) { const { params } = getValidatedInput<{ params: { id: string } }>(res); sendSuccess(res, 200, "Validasi lifecycle shipment/voyage berhasil", await service.validateReportLifecycle(params.id, actor(req))); }
@@ -33,7 +36,7 @@ export async function batchWriteReportFormSection(req: Request, res: Response) {
 
 export async function generateReportXlsx(req: Request, res: Response) {
   const { params } = getValidatedInput<{ params: { reportId: string } }>(res);
-  sendSuccess(res, 201, "XLSX resmi berhasil dibuat", await xlsxExportService.generateOfficialXlsx(params.reportId, actor(req)));
+  sendSuccess(res, 201, "Export XLSX operasional berhasil dibuat", await xlsxExportService.generateOfficialXlsx(params.reportId, actor(req)));
 }
 const sendReportXlsx = (disposition: "inline" | "attachment") => async (req: Request, res: Response, next: NextFunction) => {
   const { params } = getValidatedInput<{ params: { reportId: string } }>(res);
@@ -43,6 +46,7 @@ const sendReportXlsx = (disposition: "inline" | "attachment") => async (req: Req
     "Content-Disposition": `${disposition}; filename="${file.fileName.replace(/["\\\r\n]/g, "_")}"`,
     "Cache-Control": "private, no-store",
     "X-Content-Type-Options": "nosniff",
+    "X-Checksum-SHA256": file.checksumSha256,
   } }, (error) => { if (error) next(error); });
 };
 export const previewReportXlsx = sendReportXlsx("inline");
@@ -50,12 +54,12 @@ export const downloadReportXlsx = sendReportXlsx("attachment");
 
 export async function generateReportPdf(req: Request, res: Response) {
   const { params } = getValidatedInput<{ params: { reportId: string } }>(res);
-  const result = await pdfExportService.generateOfficialPdf(params.reportId, actor(req));
+  const result = await finalDocumentExportService.generateCompatibleFinalPdf(params.reportId, actor(req));
   sendSuccess(res, result.reused ? 200 : 201, result.reused ? "PDF final sudah tersedia" : "PDF final berhasil dibuat", result);
 }
 const sendReportPdf = (disposition: "inline" | "attachment") => async (req: Request, res: Response, next: NextFunction) => {
   const { params } = getValidatedInput<{ params: { reportId: string } }>(res);
-  const file = await pdfExportService.getOfficialPdfFile(params.reportId, actor(req));
+  const file = await finalDocumentExportService.getCompatibleFinalPdfFile(params.reportId, actor(req));
   res.sendFile(file.absolutePath, { headers: {
     "Content-Type": pdfExportService.PDF_CONTENT_TYPE,
     "Content-Disposition": `${disposition}; filename="${file.fileName.replace(/["\\\r\n]/g, "_")}"`,
@@ -66,6 +70,44 @@ const sendReportPdf = (disposition: "inline" | "attachment") => async (req: Requ
 };
 export const previewReportPdf = sendReportPdf("inline");
 export const downloadReportPdf = sendReportPdf("attachment");
+
+export async function generateLoadingBaPdf(req: Request, res: Response) {
+  const { params } = getValidatedInput<{ params: { reportId: string } }>(res);
+  const result = await baPdfExportService.generateLoadingBaPdf(params.reportId, actor(req));
+  sendSuccess(res, result.reused ? 200 : 201, result.reused ? "PDF BA LOADING sudah tersedia" : "PDF BA LOADING berhasil dibuat", result);
+}
+const sendLoadingBaPdf = (disposition: "inline" | "attachment") => async (req: Request, res: Response, next: NextFunction) => {
+  const { params } = getValidatedInput<{ params: { reportId: string } }>(res);
+  const file = await baPdfExportService.getLoadingBaPdfFile(params.reportId, actor(req));
+  res.sendFile(file.absolutePath, { headers: {
+    "Content-Type": baPdfExportService.PDF_CONTENT_TYPE,
+    "Content-Disposition": `${disposition}; filename="${file.fileName.replace(/["\\\r\n]/g, "_")}"`,
+    "Cache-Control": "private, no-store",
+    "X-Content-Type-Options": "nosniff",
+    "X-Checksum-SHA256": file.metadata.checksumSha256,
+  } }, (error) => { if (error) next(error); });
+};
+export const previewLoadingBaPdf = sendLoadingBaPdf("inline");
+export const downloadLoadingBaPdf = sendLoadingBaPdf("attachment");
+
+export async function generateUnloadingBaPdf(req: Request, res: Response) {
+  const { params } = getValidatedInput<{ params: { reportId: string } }>(res);
+  const result = await baPdfExportService.generateUnloadingBaPdf(params.reportId, actor(req));
+  sendSuccess(res, result.reused ? 200 : 201, result.reused ? "PDF BA UNLOADING sudah tersedia" : "PDF BA UNLOADING berhasil dibuat", result);
+}
+const sendUnloadingBaPdf = (disposition: "inline" | "attachment") => async (req: Request, res: Response, next: NextFunction) => {
+  const { params } = getValidatedInput<{ params: { reportId: string } }>(res);
+  const file = await baPdfExportService.getUnloadingBaPdfFile(params.reportId, actor(req));
+  res.sendFile(file.absolutePath, { headers: {
+    "Content-Type": baPdfExportService.PDF_CONTENT_TYPE,
+    "Content-Disposition": `${disposition}; filename="${file.fileName.replace(/["\\\r\n]/g, "_")}"`,
+    "Cache-Control": "private, no-store",
+    "X-Content-Type-Options": "nosniff",
+    "X-Checksum-SHA256": file.metadata.checksumSha256,
+  } }, (error) => { if (error) next(error); });
+};
+export const previewUnloadingBaPdf = sendUnloadingBaPdf("inline");
+export const downloadUnloadingBaPdf = sendUnloadingBaPdf("attachment");
 
 export async function listPlantJettyAssignments(_req: Request, res: Response) { const { query } = getValidatedInput<{ query: ListPlantJettyAssignmentsInput }>(res); const result = await service.listPlantJettyAssignments(query); sendSuccess(res, 200, "Daftar assignment Plant-Jetty berhasil diambil", result.items, result.pagination); }
 export async function createPlantJettyAssignment(req: Request, res: Response) { const { body } = getValidatedInput<{ body: CreatePlantJettyAssignmentInput }>(res); sendSuccess(res, 201, "Assignment Plant-Jetty berhasil dibuat", await service.createPlantJettyAssignment(body, actor(req))); }
@@ -86,6 +128,10 @@ export async function listSignatures(req: Request, res: Response) { const { para
 export async function getSignature(req: Request, res: Response) { const { params } = getValidatedInput<{ params: { id: string } }>(res); sendSuccess(res, 200, "Tanda tangan berhasil diambil", await signatureService.getSignature(params.id, actor(req))); }
 export async function createSignature(req: Request, res: Response) { const { params, body } = getValidatedInput<{ params: { reportId: string }; body: SignatureInput }>(res); sendSuccess(res, 201, "Tanda tangan berhasil dibuat", await signatureService.createSignature(params.reportId, body, actor(req))); }
 export async function upsertSignature(req: Request, res: Response) { const { params, body } = getValidatedInput<{ params: { reportId: string; role: SignatureInput["role"] }; body: UpsertSignatureInput }>(res); sendSuccess(res, 200, "Tanda tangan berhasil disimpan", await signatureService.upsertSignature(params.reportId, params.role, body, actor(req))); }
+export async function getBaDocument(req: Request, res: Response) { const { params } = getValidatedInput<{ params: { reportId: string; phase: BeritaAcaraPhaseInput } }>(res); sendSuccess(res, 200, "Dokumen Berita Acara berhasil diambil", await signatureService.getBaDocument(params.reportId, params.phase, actor(req))); }
+export async function listBaSignatures(req: Request, res: Response) { const { params } = getValidatedInput<{ params: { reportId: string; phase: BeritaAcaraPhaseInput } }>(res); sendSuccess(res, 200, "Daftar tanda tangan Berita Acara berhasil diambil", await signatureService.listBaSignatures(params.reportId, params.phase, actor(req))); }
+export async function upsertBaSignature(req: Request, res: Response) { const { params, body } = getValidatedInput<{ params: { reportId: string; phase: BeritaAcaraPhaseInput; role: SignatureInput["role"] }; body: UpsertSignatureInput }>(res); sendSuccess(res, 200, "Tanda tangan Berita Acara berhasil disimpan", await signatureService.upsertBaSignature(params.reportId, params.phase, params.role, body, actor(req))); }
+export async function finalizeBaDocument(req: Request, res: Response) { const { params } = getValidatedInput<{ params: { reportId: string; phase: BeritaAcaraPhaseInput } }>(res); sendSuccess(res, 200, "Berita Acara berhasil difinalisasi", await signatureService.finalizeBaDocument(params.reportId, params.phase, actor(req))); }
 export async function updateSignature(req: Request, res: Response) { const { params, body } = getValidatedInput<{ params: { id: string }; body: UpdateSignatureInput }>(res); sendSuccess(res, 200, "Tanda tangan berhasil diperbarui", await signatureService.updateSignature(params.id, body, actor(req))); }
 export async function uploadSignatureFile(req: Request, res: Response) { const { params } = getValidatedInput<{ params: { id: string } }>(res); sendSuccess(res, 200, "File tanda tangan berhasil disimpan", await signatureService.uploadSignatureFile(params.id, req.file, actor(req))); }
 const sendSignatureFile = (disposition: "inline" | "attachment") => async (req: Request, res: Response, next: NextFunction) => {

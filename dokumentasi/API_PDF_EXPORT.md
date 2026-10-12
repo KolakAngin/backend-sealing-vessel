@@ -1,5 +1,7 @@
 # API Generator PDF Native dan Appendix Dokumentasi
 
+> Catatan kompatibilitas: dokumen pada bab ini adalah generator legacy untuk laporan historis yang sama sekali belum mempunyai `BeritaAcaraDocument`. Untuk shipment phase-aware dengan BA UNLOADING final, endpoint lama `/{resource}/:id/pdf` menjadi alias ke `/{resource}/:id/ba/unloading/pdf`; preview/download mengirim byte dan checksum artefak `BeritaAcaraPdfArtifact` yang sama dan tidak membuat `PdfArtifact` kedua. Jika shipment sudah mempunyai dokumen phase-aware tetapi BA UNLOADING belum final, fallback legacy ditolak dengan HTTP 409.
+
 ## 1. Keputusan pipeline
 
 Generator membuat seluruh halaman form secara native dengan `pdf-lib`. Tidak ada halaman PDF sumber yang disalin, ditanam, dijadikan background, atau ditutupi dengan kotak putih. Header, identitas dokumen, paragraf, tabel A–H, nomor segel, status, area tanda tangan, footer, dan appendix digambar sebagai teks, garis, bentuk vektor, dan gambar data aktual.
@@ -24,7 +26,7 @@ Setiap halaman berukuran sekitar `595.4 × 842 pt` (A4). Renderer hanya menerima
 
 ## 2. Artefak berversi dan idempotensi
 
-`PdfArtifact` menyimpan satu hasil final aktif per `SealingReport` melalui unique constraint `sealingReportId`. Metadata yang disimpan:
+Pada cabang historis, `PdfArtifact` menyimpan satu hasil final aktif per `SealingReport` melalui unique constraint `sealingReportId`. Metadata yang disimpan:
 
 - nama dan storage key;
 - MIME dan ukuran byte;
@@ -40,7 +42,7 @@ Artefak dari renderer overlay lama otomatis dibuat ulang ketika endpoint `POST .
 
 ## 3. Endpoint
 
-Ketiga prefix berikut menunjuk artefak yang sama:
+Ketiga prefix berikut melewati compatibility service yang sama:
 
 ```text
 POST /api/v1/reports/:reportId/pdf
@@ -56,7 +58,7 @@ GET  /api/v1/voyages/:reportId/pdf/download
 GET  /api/v1/shipments/:reportId/pdf/download
 ```
 
-Semua endpoint memerlukan bearer token. Generate diizinkan untuk `ADMIN`, `SUPERVISOR`, `LOADING_MASTER`, dan `UNLOADING_MASTER`; assignment report tetap diperiksa untuk kedua role master. Viewer tidak dapat generate, tetapi dapat membaca artefak sesuai kebijakan baca laporan yang berlaku.
+Semua endpoint memerlukan bearer token. Untuk laporan historis, generate diizinkan bagi `ADMIN`, `SUPERVISOR`, `LOADING_MASTER`, dan `UNLOADING_MASTER` dengan pemeriksaan assignment existing. Untuk shipment phase-aware, otorisasi mengikuti BA UNLOADING: assigned `UNLOADING_MASTER`, `SUPERVISOR`, atau `ADMIN`; Loading Master biasa tidak dapat generate/preview/download dokumen final. Viewer tidak dapat generate.
 
 Generate pertama memberi HTTP `201`; panggilan idempotent berikutnya HTTP `200`. Contoh data respons:
 

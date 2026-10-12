@@ -285,6 +285,25 @@ test("Transaksi pengisian nomor segel A-H, grouping, validasi, dan audit", async
     );
     assert.equal(duplicateAcrossPoints.response.status, 409);
 
+    const reuseReport = await createLegacyReport(vessel.id, "REUSE-SEAL");
+    const reusePrepared = await call<unknown>(`/shipments/${reuseReport.id}/prepare-seals`, json("POST", {}));
+    assert.equal(reusePrepared.response.status, 200, JSON.stringify(reusePrepared.body));
+    const reusedAcrossShipment = await call<{ section: FormSection }>(
+      `/shipments/${reuseReport.id}/form/sections/G`,
+      json("PUT", {
+        points: [{
+          vesselSealingPointId: gPoint,
+          status: "SEALED",
+          seals: [{ sealNumber: `g-${suffix}-01` }],
+        }],
+      }),
+    );
+    assert.equal(reusedAcrossShipment.response.status, 200, JSON.stringify(reusedAcrossShipment.body));
+    assert.equal(
+      reusedAcrossShipment.body.data.section.rows[0]!.columns[0]!.seals[0]!.sealNumber,
+      `G-${suffix}-01`,
+    );
+
     const foreignVessel = await prisma.vessel.create({ data: { name: `STEP 6 FOREIGN ${suffix}` } });
     vesselIds.push(foreignVessel.id);
     const foreignTemplate = templatesBySection.get("B")![0]!;
@@ -315,6 +334,17 @@ test("Transaksi pengisian nomor segel A-H, grouping, validasi, dan audit", async
     assert.equal(cleared.body.data.point.status, "NOT_SEALED");
     assert.equal(cleared.body.data.point.notes, null);
     assert.equal(cleared.body.data.point.seals.length, 0);
+    const historicalGSeals = await prisma.seal.findMany({
+      where: { sealingReportId: report.id, sealNumber: { startsWith: `G-${suffix}-` } },
+      select: { sealNumber: true, status: true },
+    });
+    assert.equal(historicalGSeals.length, 3);
+    assert.equal(historicalGSeals.every((seal: { status: string }) => seal.status === "REPLACED"), true);
+    const reuseClearedFormNumber = await call<unknown>(
+      `/shipments/${report.id}/form/points/${bPoint}`,
+      json("PUT", { status: "SEALED", seals: [{ sealNumber: `g-${suffix}-01` }] }),
+    );
+    assert.equal(reuseClearedFormNumber.response.status, 409);
 
     const noGVessel = await prisma.vessel.create({
       data: {

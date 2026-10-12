@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { mkdir, readFile, rename, stat, unlink, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import JSZip from "jszip";
@@ -39,6 +39,7 @@ type FormSnapshot = {
 };
 type FinalSignature = {
   id: string;
+  phase?: "LOADING" | "UNLOADING" | null;
   role: "CHIEF_OFFICER" | "TERMINAL_REPRESENTATIVE" | "SURVEYOR";
   name: string;
   signedAt: string | null;
@@ -56,6 +57,7 @@ type FinalRecord = {
 };
 type FinalSnapshot = {
   schemaVersion: number;
+  phase?: "LOADING" | "UNLOADING";
   capturedAt: string;
   report: {
     id: string;
@@ -76,6 +78,7 @@ type FinalSnapshot = {
   };
   formConfigurationSnapshot: FormSnapshot;
   signatures: FinalSignature[];
+  loadingSignatures?: FinalSignature[];
   records: FinalRecord[];
 };
 type ExportPoint = SnapshotPoint & { record: FinalRecord | null };
@@ -94,7 +97,11 @@ function parseFinalSnapshot(value: unknown): FinalSnapshot {
   if (snapshot.schemaVersion !== 1 || !snapshot.report || !form || !Array.isArray(form.sections) || !Array.isArray(form.points) || !Array.isArray(snapshot.records) || !Array.isArray(snapshot.signatures)) {
     throw new AppError(409, "Struktur snapshot final laporan tidak didukung generator XLSX");
   }
-  return snapshot as FinalSnapshot;
+  const parsed = snapshot as FinalSnapshot;
+  if (parsed.phase === "UNLOADING" && Array.isArray(parsed.loadingSignatures)) {
+    return { ...parsed, signatures: parsed.loadingSignatures };
+  }
+  return parsed;
 }
 
 function assertReadable(report: { createdById: string; loadingMasterId: string | null; unloadingMasterId: string | null }, actor: XlsxActor) {
@@ -109,7 +116,7 @@ async function loadFinalReport(reportId: string, actor: XlsxActor) {
   });
   if (!report) throw new AppError(404, "Shipment/voyage tidak ditemukan");
   assertReadable(report, actor);
-  if (report.status !== "FINISH") throw new AppError(409, "XLSX resmi hanya dapat dibuat dari laporan FINISH");
+  if (report.status !== "FINISH") throw new AppError(409, "Export XLSX operasional hanya dapat dibuat dari laporan FINISH");
   return { report, snapshot: parseFinalSnapshot(report.finalSnapshot) };
 }
 
@@ -376,14 +383,15 @@ async function loadSignatureImages(signatures: FinalSignature[]) {
   for (const signature of signatures) {
     const mime = signature.signatureMimeType;
     if (!mime || !signature.signatureFileName || !["image/jpeg", "image/png", "image/webp"].includes(mime)) continue;
+    const storageName = `signature-${signature.phase ? `${signature.phase.toLowerCase()}-` : ""}${signature.id}.${extensionForMimeType(mime)}`;
     let bytes: Buffer;
     try {
-      bytes = await readFile(resolveFile(`signature-${signature.id}.${extensionForMimeType(mime)}`));
+      bytes = await readFile(resolveFile(storageName));
     } catch {
       throw new AppError(409, `File tanda tangan ${signature.role} tidak ditemukan`);
     }
     if (signature.signatureChecksumSha256 && hash(bytes) !== signature.signatureChecksumSha256) throw new AppError(409, `Checksum file tanda tangan ${signature.role} tidak sesuai snapshot final`);
-    result.push({ signature, mediaName: `signature-${signature.id}.${extensionForMimeType(mime)}`, bytes, contentType: mime });
+    result.push({ signature, mediaName: storageName, bytes, contentType: mime });
   }
   return result;
 }
@@ -487,7 +495,7 @@ export async function generateOfficialXlsx(reportId: string, actor: XlsxActor) {
     try {
       await prisma.auditLog.create({ data: {
         userId: actor.id, action: "CREATE", entityType: "XLSX_EXPORT", entityId: reportId,
-        newData: { fileName, fileSize: generated.buffer.length, checksumSha256: hash(generated.buffer), templateChecksumSha256: generated.templateSha256, sheetCount: generated.sheetCount } as Prisma.InputJsonValue,
+        newData: { classification: "OPERATIONAL_LEGACY_EXPORT", fileName, fileSize: generated.buffer.length, checksumSha256: hash(generated.buffer), templateChecksumSha256: generated.templateSha256, sheetCount: generated.sheetCount } as Prisma.InputJsonValue,
       } });
     } catch (error) {
       await unlink(destination).catch(() => undefined);
@@ -496,17 +504,35 @@ export async function generateOfficialXlsx(reportId: string, actor: XlsxActor) {
   } finally {
     await unlink(temporary).catch(() => undefined);
   }
-  return { reportId, fileName, mimeType: XLSX_CONTENT_TYPE, fileSize: generated.buffer.length, checksumSha256: hash(generated.buffer), templateChecksumSha256: generated.templateSha256, sheetCount: generated.sheetCount, previewUrl: `/api/v1/reports/${reportId}/xlsx/preview`, downloadUrl: `/api/v1/reports/${reportId}/xlsx/download` };
+  return { reportId, documentClassification: "OPERATIONAL_LEGACY_EXPORT" as const, fileName, mimeType: XLSX_CONTENT_TYPE, fileSize: generated.buffer.length, checksumSha256: hash(generated.buffer), templateChecksumSha256: generated.templateSha256, sheetCount: generated.sheetCount, previewUrl: `/api/v1/reports/${reportId}/xlsx/preview`, downloadUrl: `/api/v1/reports/${reportId}/xlsx/download` };
 }
 
 export async function getOfficialXlsxFile(reportId: string, actor: XlsxActor) {
   const { report } = await loadFinalReport(reportId, actor);
   const fileName = outputName(report);
   const absolutePath = outputPath(fileName);
+  let stored: Buffer;
   try {
-    await stat(absolutePath);
+    stored = await readFile(absolutePath);
   } catch {
     throw new AppError(404, "XLSX belum dibuat; panggil endpoint generate terlebih dahulu");
   }
-  return { fileName, absolutePath };
+  const audit = await prisma.auditLog.findFirst({
+    where: { entityType: "XLSX_EXPORT", entityId: reportId },
+    select: { newData: true },
+    orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+  });
+  const metadata = audit?.newData && typeof audit.newData === "object" && !Array.isArray(audit.newData)
+    ? audit.newData as Record<string, unknown>
+    : null;
+  const expectedFileSize = typeof metadata?.fileSize === "number" ? metadata.fileSize : null;
+  const expectedChecksum = typeof metadata?.checksumSha256 === "string" ? metadata.checksumSha256 : null;
+  if (metadata?.fileName !== fileName || expectedFileSize === null || !expectedChecksum) {
+    throw new AppError(409, "Metadata integritas XLSX tidak tersedia; generate ulang diperlukan");
+  }
+  const checksumSha256 = hash(stored);
+  if (stored.length !== expectedFileSize || checksumSha256 !== expectedChecksum) {
+    throw new AppError(409, "Integritas export XLSX operasional gagal diverifikasi; generate ulang diperlukan");
+  }
+  return { fileName, absolutePath, fileSize: stored.length, checksumSha256 };
 }

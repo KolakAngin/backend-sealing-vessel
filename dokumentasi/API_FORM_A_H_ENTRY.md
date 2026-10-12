@@ -58,7 +58,7 @@ Dengan struktur tersebut, Bagian A dapat mempunyai lima atau lebih kolom titik p
 
 `PATCH` menerima subset `status`, `notes`, atau `seals`. Field yang tidak dikirim dipertahankan. Bila status diubah dari `SEALED`, client harus sekaligus mengirim `seals: []` atau membersihkan titik melalui DELETE.
 
-`DELETE` tidak menghapus posisi snapshot maupun record konfigurasi. Operasi tersebut menghapus nomor segel input, menghapus catatan, dan mengatur status record menjadi `NOT_SEALED`.
+`DELETE` tidak menghapus posisi snapshot maupun record konfigurasi. Operasi tersebut mengubah nomor segel aktif menjadi `REPLACED`, menghapus catatan, dan mengatur status record menjadi `NOT_SEALED`. Seluruh baris `REMOVED`/`REPLACED` dipertahankan sebagai histori; nomor historisnya immutable dan tetap tidak dapat digunakan ulang dalam shipment yang sama.
 
 ## Batch satu section
 
@@ -95,9 +95,11 @@ Seluruh point harus berasal dari section pada path. Maksimal 500 point dan 100 n
 - `SEALED` wajib mempunyai minimal satu nomor segel;
 - `NOT_SEALED` dan `NOT_APPLICABLE` tidak boleh mempunyai nomor segel;
 - nomor segel dinormalisasi menjadi uppercase;
-- nomor segel tidak boleh berulang dalam satu titik, antar-point pada batch, atau pada record lain.
+- nomor segel tidak boleh berulang dalam satu titik, antar-point pada batch, atau pada record lain dalam shipment yang sama;
+- nomor segel yang sama boleh digunakan kembali pada shipment berbeda;
+- nomor berstatus `REMOVED` atau `REPLACED` tetap menjadi riwayat dan tidak boleh digunakan pada titik lain dalam shipment yang sama.
 
-Keunikan nomor segel mengikuti constraint existing `Seal.sealNumber @unique`, yaitu global termasuk data historis. Format dan arti prefix seperti `W.` tidak divalidasi karena belum dipastikan sumber dan tidak boleh ditebak.
+Nomor dinormalisasi dengan `trim + uppercase`. Database menegakkan keunikan melalui pasangan `Seal.sealingReportId + Seal.sealNumber` dan foreign key komposit memastikan scope shipment selalu sama dengan shipment milik `SealingRecord`. Format dan arti prefix seperti `W.` tidak divalidasi karena belum dipastikan sumber dan tidak boleh ditebak.
 
 ## Audit
 

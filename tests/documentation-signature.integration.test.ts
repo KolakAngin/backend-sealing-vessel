@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
-import { readdir } from "node:fs/promises";
+import { readdir, writeFile } from "node:fs/promises";
 import type { AddressInfo } from "node:net";
 import path from "node:path";
 import { test } from "node:test";
@@ -8,7 +8,7 @@ import { test } from "node:test";
 import { app } from "../src/app.js";
 import { env } from "../src/config/env.js";
 import { prisma } from "../src/config/prisma.js";
-import { removeFile, saveFileWithRollback } from "../src/storage/local-storage.js";
+import { removeFile, resolveFile, saveFileWithRollback } from "../src/storage/local-storage.js";
 import { authorizationHeaders, createTestIdentity } from "./helpers/auth.js";
 
 type Api<T> = { success: boolean; message: string; data: T };
@@ -143,7 +143,7 @@ test("Dokumentasi empat owner/format, authorization, file safety, signature, dan
     const record = await prisma.sealingRecord.create({
       data: { sealingReportId: reportId, vesselSealingPointId: point.id, createdById: loadingMaster.user.id, pointSnapshot },
     });
-    const seal = await prisma.seal.create({ data: { sealingRecordId: record.id, sealNumber: `DOC-SEAL-${suffix}` } });
+    const seal = await prisma.seal.create({ data: { sealingRecordId: record.id, sealingReportId: report.id, sealNumber: `DOC-SEAL-${suffix}` } });
     const verification = await prisma.sealVerification.create({
       data: { sealId: seal.id, verifiedById: unloadingMaster.user.id, condition: "GOOD" },
     });
@@ -210,6 +210,11 @@ test("Dokumentasi empat owner/format, authorization, file safety, signature, dan
     const download = await fetch(`${api}/attachments/${reportAttachment.body.data.id}/download`, { headers: authorizationHeaders(loadingMaster.accessToken) });
     assert.equal(download.status, 200);
     assert.match(download.headers.get("content-disposition") ?? "", /^attachment;/);
+    await writeFile(resolveFile(`${reportAttachment.body.data.id}.png`), Buffer.alloc(files.png.bytes.length, 0x41));
+    const corruptedAttachment = await fetch(`${api}/attachments/${reportAttachment.body.data.id}/preview`, { headers: authorizationHeaders(viewer.accessToken) });
+    assert.equal(corruptedAttachment.status, 409, "Preview wajib menolak checksum attachment yang berubah");
+    await writeFile(resolveFile(`${reportAttachment.body.data.id}.png`), files.png.bytes);
+    assert.throws(() => resolveFile(`../outside-${suffix}.png`), /Lokasi file tidak valid/);
 
     const unauthorizedRead = await call<unknown>(`/attachments/${reportAttachment.body.data.id}`, undefined, otherLoadingMaster.accessToken);
     assert.equal(unauthorizedRead.response.status, 403);
@@ -281,6 +286,10 @@ test("Dokumentasi empat owner/format, authorization, file safety, signature, dan
     const signatureDownload = await fetch(`${api}/signatures/${chiefId}/download`, { headers: authorizationHeaders(loadingMaster.accessToken) });
     assert.equal(signatureDownload.status, 200);
     assert.match(signatureDownload.headers.get("content-disposition") ?? "", /^attachment;/);
+    await writeFile(resolveFile(`signature-${chiefId}.png`), Buffer.alloc(files.png.bytes.length, 0x42));
+    const corruptedSignature = await fetch(`${api}/signatures/${chiefId}/preview`, { headers: authorizationHeaders(viewer.accessToken) });
+    assert.equal(corruptedSignature.status, 409, "Preview wajib menolak checksum signature yang berubah");
+    await writeFile(resolveFile(`signature-${chiefId}.png`), files.png.bytes);
     assert.equal((await call<unknown>(`/signatures/${chiefId}`, undefined, otherLoadingMaster.accessToken)).response.status, 403);
 
     const surveyorId = signatureIds[2]!;

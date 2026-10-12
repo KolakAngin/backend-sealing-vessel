@@ -96,6 +96,7 @@ test("PDF final Queen Sofia deterministik, tersimpan, A4, dan mempunyai appendix
       reportDateTime: new Date("2026-07-28T08:30:00.000Z"), status: "FINISH", finalSnapshot,
     } as Prisma.SealingReportUncheckedCreateInput });
     reportId = report.id;
+    const historicalSnapshotBefore = JSON.stringify(report.finalSnapshot);
 
     const directA = await buildOfficialPdf(finalSnapshot as never);
     const directB = await buildOfficialPdf(finalSnapshot as never);
@@ -179,6 +180,10 @@ test("PDF final Queen Sofia deterministik, tersimpan, A4, dan mempunyai appendix
     assert.equal(regenerated.data.checksumSha256, generated.data.checksumSha256, "regenerasi layout native harus deterministik");
     assert.equal(await prisma.pdfArtifact.count({ where: { sealingReportId: report.id } }), 1);
     assert.equal(await prisma.auditLog.count({ where: { entityType: "PDF_EXPORT", entityId: report.id } }), 2);
+    assert.equal(await prisma.beritaAcaraDocument.count({ where: { sealingReportId: report.id } }), 0);
+    assert.equal(await prisma.beritaAcaraPdfArtifact.count({ where: { baDocument: { sealingReportId: report.id } } }), 0);
+    const historicalAfterLegacyExport = await prisma.sealingReport.findUnique({ where: { id: report.id }, select: { finalSnapshot: true } });
+    assert.equal(JSON.stringify(historicalAfterLegacyExport?.finalSnapshot), historicalSnapshotBefore);
 
     const pdf = await PDFDocument.load(bytes);
     assert.equal(pdf.getPageCount(), golden.pageCount);

@@ -29,6 +29,12 @@ Mutasi semua master, user, Terminal legacy, assignment Plant–Jetty, dan konfig
 | POST | `/auth/login` | Publik |
 | GET | `/auth/me` | AUTH |
 
+## Kontrak pagination
+
+Seluruh endpoint list paginated menerima `page` mulai dari 1 dan `limit` 1–100. Response mengembalikan `meta.page`, `meta.limit`, `meta.total`, dan `meta.totalPages`. Urutan selalu mempunyai tie-breaker `id` agar item dengan nilai sort yang sama tidak berpindah atau muncul ganda antarhalaman.
+
+Jika `page` yang diminta melampaui halaman terakhir—misalnya setelah item terakhir pada halaman akhir dihapus atau consumer membawa state halaman dari resource lain—backend mengembalikan halaman terakhir yang masih valid dan `meta.page` berisi nomor halaman aktual tersebut. Untuk hasil kosong, kontraknya adalah `page=1`, `total=0`, dan `totalPages=1`.
+
 ## User dan master
 
 | Method | Path | Akses |
@@ -82,6 +88,8 @@ CRUD berikut mempunyai pola yang sama: `GET` list/detail untuk `AUTH`, sedangkan
 
 Endpoint baca nested: `GET /vessels/:vesselId/compartments`, `GET /vessels/:vesselId/sealing-points`, dan `GET /sealing-categories/:categoryId/templates` (`AUTH`).
 
+Endpoint nested compartment dan titik vessel memakai `limit=100` bila query `limit` tidak dikirim, tetapi tetap mengembalikan metadata pagination dan menerima `page`/`limit` eksplisit. Hal ini mencegah konfigurasi ke-11 dan seterusnya tersembunyi pada consumer yang membaca konfigurasi satu vessel. Daftar `/vessels` menampilkan `_count.compartments` untuk compartment aktif dan `_count.sealingPoints` untuk titik A–H yang benar-benar eligible bagi snapshot mobile: point, template, kategori, dan compartment terkait aktif serta availability `AVAILABLE`.
+
 ## Shipment/voyage dan lifecycle
 
 `/shipments` adalah nama canonical. `/voyages` adalah alias canonical kompatibel dan `/reports` adalah alias legacy pada aggregate `SealingReport` yang sama.
@@ -93,11 +101,16 @@ Endpoint baca nested: `GET /vessels/:vesselId/compartments`, `GET /vessels/:vess
 | POST | `/{resource}` | A, S, LM; `/reports` memakai payload legacy |
 | PATCH, DELETE | `/{resource}/:id` | A, S, LM; LM wajib assigned |
 | POST | `/{resource}/:id/prepare-seals` | A, S, LM; LM wajib assigned |
+| PUT | `/{resource}/:id/destination-assignment` | A, S, LM; canonical, DRAFT, READY; LM wajib assigned |
 | GET | `/{resource}/:id/validation` | AUTH; LM/UM wajib assigned |
 | POST | `/{resource}/:id/depart` | A, S, LM; LM wajib assigned |
 | POST | `/{resource}/:id/arrive` | A, S, UM; UM wajib assigned |
 | POST | `/{resource}/:id/finish` | A, S, UM; UM wajib assigned |
 | POST | `/{resource}/:id/finalize` | A, S, UM; alias finalisasi ke transisi `FINISH` |
+
+Departure shipment canonical memerlukan BA LOADING final. Endpoint BA LOADING: `POST /{resource}/:id/ba/loading/finalize`, `POST /{resource}/:id/ba/loading/pdf`, serta `GET /{resource}/:id/ba/loading/pdf/preview|download`. Seluruh endpoint mutasi/generate hanya untuk A, S, atau LM assignee.
+
+Setelah kapal `SANDAR`, A, S, atau UM assignee melengkapi verification/foto dan tiga signature UNLOADING, lalu memanggil `POST /{resource}/:id/ba/unloading/finalize`. Endpoint `finish/finalize` lifecycle baru terbuka setelah dokumen tersebut final.
 
 ## Snapshot dan input form A–H
 
@@ -150,6 +163,17 @@ Owner lain dan file:
 | PUT | `/signatures/:id/file` | A/S/LM/UM sesuai assignment |
 | GET | `/signatures/:id/preview`, `/signatures/:id/download` | AUTH; assignment berlaku |
 
+Endpoint di atas adalah kontrak signature legacy (`phase = NULL`). Fondasi BA dua tahap menambahkan endpoint berikut untuk setiap `{resource}` = `shipments`, `voyages`, `reports`:
+
+| Method | Path | Akses |
+|---|---|---|
+| GET | `/{resource}/:reportId/ba/:phase` | AUTH; assignment baca berlaku |
+| GET | `/{resource}/:reportId/ba/:phase/signatures` | AUTH; assignment baca berlaku |
+| PUT | `/{resource}/:reportId/ba/:phase/signatures/:role` | LOADING: A/S/assigned LM saat DRAFT; UNLOADING: A/S/assigned UM saat SANDAR |
+| POST | `/{resource}/:reportId/ba/:phase/finalize` | Otorisasi per phase; tiga role wajib lengkap; phase dikunci |
+
+Detail model, snapshot, migration legacy, dan fondasi artefak ada di [API_BERITA_ACARA_PHASE.md](./API_BERITA_ACARA_PHASE.md).
+
 `PUT /shipments/:id/signatures/CHIEF_OFFICER` menerima JSON seperti
 `{"name":"Budi","signedAt":"2026-09-20T03:10:00.000Z"}`. Role yang tersedia:
 `CHIEF_OFFICER`, `TERMINAL_REPRESENTATIVE`, dan `SURVEYOR`. `name` wajib;
@@ -164,10 +188,10 @@ Untuk setiap `{resource}` = `shipments`, `voyages`, `reports`:
 
 | Method | Path | Akses |
 |---|---|---|
-| POST | `/{resource}/:reportId/xlsx` | A/S/LM/UM sesuai assignment; laporan wajib final |
+| POST | `/{resource}/:reportId/xlsx` | Export operasional/legacy, bukan BA; A/S/LM/UM sesuai assignment; laporan wajib final |
 | GET | `/{resource}/:reportId/xlsx/preview`, `/{resource}/:reportId/xlsx/download` | AUTH; assignment berlaku |
-| POST | `/{resource}/:reportId/pdf` | A/S/LM/UM sesuai assignment; laporan wajib final |
-| GET | `/{resource}/:reportId/pdf/preview`, `/{resource}/:reportId/pdf/download` | AUTH; assignment berlaku |
+| POST | `/{resource}/:reportId/pdf` | Compatibility facade: BA UNLOADING untuk phase-aware, `PdfArtifact` untuk historis tanpa dokumen BA |
+| GET | `/{resource}/:reportId/pdf/preview`, `/{resource}/:reportId/pdf/download` | Byte artefak BA UNLOADING yang sama untuk phase-aware; artefak legacy untuk historis |
 | GET | `/audit-logs` | A, S |
 
 Payload, response, validasi detail, MIME, dan contoh penggunaan tersedia pada dokumen API per STEP di folder ini. Daftar ini adalah inventaris route final dan matriks akses release gate; route yang tidak tercantum dianggap bukan kontrak API backend.

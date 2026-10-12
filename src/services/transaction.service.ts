@@ -2,12 +2,12 @@ import { randomUUID } from "node:crypto";
 
 import { prisma } from "../config/prisma.js";
 import type { AuditAction, Prisma, ReportStatus, SealCondition, SealingProcessStatus, UserRole } from "../generated/prisma/client.js";
-import type { CreatePlantJettyAssignmentInput, CreateRecordInput, CreateReportInput, CreateSealInput, CreateShipmentInput, FormPointPatchInput, FormPointWriteInput, FormSectionBatchInput, ListAuditsInput, ListPlantJettyAssignmentsInput, ListReportsInput, UpdateRecordInput, UpdateReportInput, UpdateSealInput, UpdateShipmentInput, VerifySealInput } from "../schemas/transaction.schema.js";
+import type { CreatePlantJettyAssignmentInput, CreateRecordInput, CreateReportInput, CreateSealInput, CreateShipmentInput, DestinationAssignmentInput, FormPointPatchInput, FormPointWriteInput, FormSectionBatchInput, ListAuditsInput, ListPlantJettyAssignmentsInput, ListReportsInput, UpdateRecordInput, UpdateReportInput, UpdateSealInput, UpdateShipmentInput, VerifySealInput } from "../schemas/transaction.schema.js";
 import { AppError } from "../utils/app-error.js";
+import { resolvePagination } from "../utils/pagination.js";
 
 export type Actor = { id: string; role: UserRole };
 const asJson = (value: unknown) => JSON.parse(JSON.stringify(value)) as Prisma.InputJsonValue;
-const pageMeta = (page: number, limit: number, total: number) => ({ page, limit, total, totalPages: Math.ceil(total / limit) });
 const canManage = (actor: Actor) => actor.role === "ADMIN" || actor.role === "SUPERVISOR";
 const canLoad = (actor: Actor) => canManage(actor) || actor.role === "LOADING_MASTER";
 const canUnload = (actor: Actor) => canManage(actor) || actor.role === "UNLOADING_MASTER";
@@ -83,13 +83,14 @@ export async function listReports(query: ListReportsInput, actor: Actor) {
       { portName: { contains: query.search, mode: "insensitive" } },
     ] }] } : {}),
   };
-  const items = await prisma.sealingReport.findMany({ where, include: reportInclude, skip: (query.page - 1) * query.limit, take: query.limit, orderBy: { reportDateTime: query.sortOrder } });
   const total = await prisma.sealingReport.count({ where });
-  return { items: items.map(withSnapshotDrawing), pagination: pageMeta(query.page, query.limit, total) };
+  const pagination = resolvePagination(query.page, query.limit, total);
+  const items = await prisma.sealingReport.findMany({ where, include: reportInclude, skip: pagination.skip, take: pagination.take, orderBy: [{ reportDateTime: query.sortOrder }, { id: "asc" }] });
+  return { items: items.map(withSnapshotDrawing), pagination: pagination.meta };
 }
 
 export async function getReport(id: string, actor?: Actor) {
-  const item = await prisma.sealingReport.findUnique({ where: { id }, include: { ...reportInclude, sealingRecords: { include: { vesselSealingPoint: { include: { compartment: true, sealingPointTemplate: true } }, seals: { include: { verifications: true } } }, orderBy: { createdAt: "asc" } }, signatures: { orderBy: { role: "asc" } } } });
+  const item = await prisma.sealingReport.findUnique({ where: { id }, include: { ...reportInclude, sealingRecords: { include: { vesselSealingPoint: { include: { compartment: true, sealingPointTemplate: true } }, seals: { include: { verifications: true } } }, orderBy: { createdAt: "asc" } }, signatures: { where: { phase: null }, orderBy: { role: "asc" } } } });
   if (!item) throw new AppError(404, "Laporan sealing tidak ditemukan");
   if (actor?.role === "LOADING_MASTER" && (item.loadingMasterId ?? item.createdById) !== actor.id) throw new AppError(403, "Anda tidak berhak melihat perjalanan ini");
   if (actor?.role === "UNLOADING_MASTER" && item.unloadingMasterId !== actor.id) throw new AppError(403, "Anda tidak berhak menerima perjalanan ini");
@@ -119,9 +120,21 @@ async function resolveLoadingMasterId(loadingMasterId: string | undefined, actor
   return resolved;
 }
 
-async function validateUnloadingMaster(unloadingMasterId: string | null | undefined) {
+type ShipmentReferenceClient = Pick<
+  typeof prisma,
+  "vessel" | "activity" | "product" | "plant" | "jetty" | "plantJettyAssignment" | "user"
+>;
+type DestinationAssignmentTransactionClient = ShipmentReferenceClient & Pick<
+  typeof prisma,
+  "sealingReport" | "beritaAcaraDocument" | "auditLog" | "$queryRawUnsafe"
+>;
+
+async function validateUnloadingMaster(
+  unloadingMasterId: string | null | undefined,
+  database: Pick<ShipmentReferenceClient, "user"> = prisma,
+) {
   if (!unloadingMasterId) return;
-  const unloadingMaster = await prisma.user.findUnique({
+  const unloadingMaster = await database.user.findUnique({
     where: { id: unloadingMasterId },
     select: { id: true, role: true, isActive: true },
   });
@@ -130,29 +143,21 @@ async function validateUnloadingMaster(unloadingMasterId: string | null | undefi
   }
 }
 
-async function validateShipmentReferences(input: {
+async function validateCoreShipmentReferences(input: {
   vesselId: string;
   activityId: string;
   productId: string;
   loadingPlantId: string;
   loadingJettyId: string;
-  dischargePlantId: string;
-  dischargeJettyId: string;
-}) {
-  const [vessel, activity, product, loadingPlant, loadingJetty, dischargePlant, dischargeJetty, loadingAssignment, dischargeAssignment] = await Promise.all([
-    prisma.vessel.findUnique({ where: { id: input.vesselId }, select: { id: true, isActive: true } }),
-    prisma.activity.findUnique({ where: { id: input.activityId }, select: { id: true, code: true, isActive: true } }),
-    prisma.product.findUnique({ where: { id: input.productId }, select: { id: true, isActive: true } }),
-    prisma.plant.findUnique({ where: { id: input.loadingPlantId }, select: { id: true, isActive: true } }),
-    prisma.jetty.findUnique({ where: { id: input.loadingJettyId }, select: { id: true, isActive: true } }),
-    prisma.plant.findUnique({ where: { id: input.dischargePlantId }, select: { id: true, isActive: true } }),
-    prisma.jetty.findUnique({ where: { id: input.dischargeJettyId }, select: { id: true, isActive: true } }),
-    prisma.plantJettyAssignment.findUnique({
+}, database: ShipmentReferenceClient = prisma) {
+  const [vessel, activity, product, loadingPlant, loadingJetty, loadingAssignment] = await Promise.all([
+    database.vessel.findUnique({ where: { id: input.vesselId }, select: { id: true, isActive: true } }),
+    database.activity.findUnique({ where: { id: input.activityId }, select: { id: true, code: true, isActive: true } }),
+    database.product.findUnique({ where: { id: input.productId }, select: { id: true, isActive: true } }),
+    database.plant.findUnique({ where: { id: input.loadingPlantId }, select: { id: true, isActive: true } }),
+    database.jetty.findUnique({ where: { id: input.loadingJettyId }, select: { id: true, isActive: true } }),
+    database.plantJettyAssignment.findUnique({
       where: { plantId_jettyId: { plantId: input.loadingPlantId, jettyId: input.loadingJettyId } },
-      select: { id: true },
-    }),
-    prisma.plantJettyAssignment.findUnique({
-      where: { plantId_jettyId: { plantId: input.dischargePlantId, jettyId: input.dischargeJettyId } },
       select: { id: true },
     }),
   ]);
@@ -165,16 +170,35 @@ async function validateShipmentReferences(input: {
   if (!product?.isActive) throw new AppError(400, "Product tidak tersedia atau tidak aktif");
   if (!loadingPlant?.isActive) throw new AppError(400, "Loading plant tidak tersedia atau tidak aktif");
   if (!loadingJetty?.isActive) throw new AppError(400, "Loading jetty tidak tersedia atau tidak aktif");
+  if (!loadingAssignment) throw new AppError(400, "Loading jetty tidak terdaftar pada loading plant");
+}
+
+async function validateDestinationReferences(input: {
+  dischargePlantId: string;
+  dischargeJettyId: string;
+}, database: Pick<ShipmentReferenceClient, "plant" | "jetty" | "plantJettyAssignment"> = prisma) {
+  const [dischargePlant, dischargeJetty, dischargeAssignment] = await Promise.all([
+    database.plant.findUnique({ where: { id: input.dischargePlantId }, select: { id: true, isActive: true } }),
+    database.jetty.findUnique({ where: { id: input.dischargeJettyId }, select: { id: true, isActive: true } }),
+    database.plantJettyAssignment.findUnique({
+      where: { plantId_jettyId: { plantId: input.dischargePlantId, jettyId: input.dischargeJettyId } },
+      select: { id: true },
+    }),
+  ]);
+
   if (!dischargePlant?.isActive) throw new AppError(400, "Discharge plant tidak tersedia atau tidak aktif");
   if (!dischargeJetty?.isActive) throw new AppError(400, "Discharge jetty tidak tersedia atau tidak aktif");
-  if (!loadingAssignment) throw new AppError(400, "Loading jetty tidak terdaftar pada loading plant");
   if (!dischargeAssignment) throw new AppError(400, "Discharge jetty tidak terdaftar pada discharge plant");
 }
 
 export async function createShipment(input: CreateShipmentInput, actor: Actor) {
   const loadingMasterId = await resolveLoadingMasterId(input.loadingMasterId, actor);
   await Promise.all([
-    validateShipmentReferences(input),
+    validateCoreShipmentReferences(input),
+    ...(input.dischargePlantId && input.dischargeJettyId ? [validateDestinationReferences({
+      dischargePlantId: input.dischargePlantId,
+      dischargeJettyId: input.dischargeJettyId,
+    })] : []),
     validateUnloadingMaster(input.unloadingMasterId),
   ]);
 
@@ -207,49 +231,136 @@ export async function createShipment(input: CreateShipmentInput, actor: Actor) {
 }
 
 export async function updateShipment(id: string, input: UpdateShipmentInput, actor: Actor) {
-  const old = await prisma.sealingReport.findUnique({ where: { id } });
-  if (!old) throw new AppError(404, "Shipment/voyage tidak ditemukan");
-  assertLoadingOwner(old.createdById, actor, old.loadingMasterId);
-  if (old.status !== "DRAFT") throw new AppError(400, "Hanya shipment/voyage DRAFT yang dapat diperbarui");
-  if (input.loadingMasterId && input.loadingMasterId !== old.loadingMasterId && !canManage(actor)) {
-    throw new AppError(403, "Hanya Supervisor atau Admin yang dapat mengganti assignment Loading Master");
-  }
+  return prisma.$transaction(async (rawTransaction) => {
+    const tx = rawTransaction as unknown as DestinationAssignmentTransactionClient & Pick<typeof prisma, "sealingRecord">;
+    await tx.$queryRawUnsafe('SELECT "id" FROM "sealing_report" WHERE "id" = $1 FOR UPDATE', id);
+    const old = await tx.sealingReport.findUnique({ where: { id } });
+    if (!old) throw new AppError(404, "Shipment/voyage tidak ditemukan");
+    assertLoadingOwner(old.createdById, actor, old.loadingMasterId);
+    if (old.status !== "DRAFT") throw new AppError(400, "Hanya shipment/voyage DRAFT yang dapat diperbarui");
+    if (input.dischargePlantId !== undefined || input.dischargeJettyId !== undefined) {
+      throw new AppError(400, "Gunakan endpoint destination-assignment untuk memilih atau mengubah discharge Plant dan Jetty");
+    }
+    const loadingBa = await tx.beritaAcaraDocument.findUnique({
+      where: { sealingReportId_phase: { sealingReportId: id, phase: "LOADING" } },
+      select: { status: true },
+    });
+    if (loadingBa?.status === "FINALIZED") {
+      throw new AppError(400, "Shipment/voyage telah dikunci setelah BA LOADING difinalisasi");
+    }
+    if (input.loadingMasterId && input.loadingMasterId !== old.loadingMasterId && !canManage(actor)) {
+      throw new AppError(403, "Hanya Supervisor atau Admin yang dapat mengganti assignment Loading Master");
+    }
 
-  const references = {
-    vesselId: input.vesselId ?? old.vesselId,
-    activityId: input.activityId ?? old.activityId,
-    productId: input.productId ?? old.productId,
-    loadingPlantId: input.loadingPlantId ?? old.loadingPlantId,
-    loadingJettyId: input.loadingJettyId ?? old.loadingJettyId,
-    dischargePlantId: input.dischargePlantId ?? old.dischargePlantId,
-    dischargeJettyId: input.dischargeJettyId ?? old.dischargeJettyId,
-  };
-  const voyageNumber = input.voyageNumber ?? old.voyageNumber;
-  const shipmentNumber = input.shipmentNumber ?? old.shipmentNumber;
-  if (!references.activityId || !references.productId || !references.loadingPlantId || !references.loadingJettyId || !references.dischargePlantId || !references.dischargeJettyId || !voyageNumber || !shipmentNumber) {
-    throw new AppError(400, "Laporan historis belum memiliki seluruh field wajib shipment");
-  }
-  await Promise.all([
-    validateShipmentReferences(references as Required<typeof references>),
-    ...(input.loadingMasterId ? [validateLoadingMaster(input.loadingMasterId)] : []),
-    validateUnloadingMaster(input.unloadingMasterId),
-  ]);
-  if (input.vesselId && input.vesselId !== old.vesselId && await prisma.sealingRecord.count({ where: { sealingReportId: id } }) > 0) {
-    throw new AppError(400, "Vessel tidak dapat diubah setelah titik segel disiapkan");
-  }
+    const references = {
+      vesselId: input.vesselId ?? old.vesselId,
+      activityId: input.activityId ?? old.activityId,
+      productId: input.productId ?? old.productId,
+      loadingPlantId: input.loadingPlantId ?? old.loadingPlantId,
+      loadingJettyId: input.loadingJettyId ?? old.loadingJettyId,
+    };
+    const voyageNumber = input.voyageNumber ?? old.voyageNumber;
+    const shipmentNumber = input.shipmentNumber ?? old.shipmentNumber;
+    if (!references.activityId || !references.productId || !references.loadingPlantId || !references.loadingJettyId || !voyageNumber || !shipmentNumber) {
+      throw new AppError(400, "Laporan historis belum memiliki seluruh field inti shipment");
+    }
+    await Promise.all([
+      validateCoreShipmentReferences(references as Required<typeof references>, tx),
+      ...(input.loadingMasterId ? [validateLoadingMaster(input.loadingMasterId)] : []),
+      validateUnloadingMaster(input.unloadingMasterId, tx),
+    ]);
+    if (input.vesselId && input.vesselId !== old.vesselId && await tx.sealingRecord.count({ where: { sealingReportId: id } }) > 0) {
+      throw new AppError(400, "Vessel tidak dapat diubah setelah titik segel disiapkan");
+    }
 
-  const data = withoutUndefined({
-    ...input,
-    ...(input.voyageNumber ? { voyageNumber: input.voyageNumber.toUpperCase() } : {}),
-    ...(input.shipmentNumber ? { shipmentNumber: input.shipmentNumber.toUpperCase() } : {}),
-    ...(input.sealingStatus ? { sealingStatus: input.sealingStatus.toUpperCase() } : {}),
-    ...(!input.sealingStatus && !old.sealingStatus ? { sealingStatus: defaultSealingStatus } : {}),
+    const data = withoutUndefined({
+      ...input,
+      ...(input.voyageNumber ? { voyageNumber: input.voyageNumber.toUpperCase() } : {}),
+      ...(input.shipmentNumber ? { shipmentNumber: input.shipmentNumber.toUpperCase() } : {}),
+      ...(input.sealingStatus ? { sealingStatus: input.sealingStatus.toUpperCase() } : {}),
+      ...(!input.sealingStatus && !old.sealingStatus ? { sealingStatus: defaultSealingStatus } : {}),
+    });
+    const updated = await tx.sealingReport.update({ where: { id }, data, include: reportInclude });
+    await tx.auditLog.create({
+      data: {
+        userId: actor.id,
+        action: "UPDATE",
+        entityType: "SHIPMENT_VOYAGE",
+        entityId: id,
+        oldData: asJson(old),
+        newData: asJson(data),
+      },
+    });
+    return updated;
   });
-  const [updated] = await prisma.$transaction([
-    prisma.sealingReport.update({ where: { id }, data, include: reportInclude }),
-    audit(actor.id, "UPDATE", "SHIPMENT_VOYAGE", id, old, data),
-  ]);
-  return updated;
+}
+
+export async function assignShipmentDestination(id: string, input: DestinationAssignmentInput, actor: Actor) {
+  return prisma.$transaction(async (rawTransaction) => {
+    const tx = rawTransaction as unknown as DestinationAssignmentTransactionClient;
+    await tx.$queryRawUnsafe('SELECT "id" FROM "sealing_report" WHERE "id" = $1 FOR UPDATE', id);
+    const old = await tx.sealingReport.findUnique({
+      where: { id },
+      select: {
+        id: true,
+        shipmentNumber: true,
+        createdById: true,
+        loadingMasterId: true,
+        unloadingMasterId: true,
+        dischargePlantId: true,
+        dischargeJettyId: true,
+        status: true,
+        sealingProcessStatus: true,
+      },
+    });
+    if (!old) throw new AppError(404, "Shipment/voyage tidak ditemukan");
+    if (!old.shipmentNumber) throw new AppError(400, "Destination assignment hanya tersedia untuk shipment/voyage canonical");
+    assertLoadingOwner(old.createdById, actor, old.loadingMasterId);
+    if (old.status !== "DRAFT") throw new AppError(400, "Destination hanya dapat dipilih ketika shipment/voyage masih DRAFT");
+    if (old.sealingProcessStatus !== "READY") {
+      throw new AppError(400, "Destination hanya dapat dipilih setelah penyegelan loading lengkap (READY)");
+    }
+    const loadingBa = await tx.beritaAcaraDocument.findUnique({
+      where: { sealingReportId_phase: { sealingReportId: id, phase: "LOADING" } },
+      select: { status: true },
+    });
+    if (loadingBa?.status === "FINALIZED") {
+      throw new AppError(400, "Destination telah dikunci setelah BA LOADING difinalisasi");
+    }
+
+    await Promise.all([
+      validateDestinationReferences(input, tx),
+      validateUnloadingMaster(input.unloadingMasterId, tx),
+    ]);
+
+    const assignedAt = new Date();
+    const data = {
+      dischargePlantId: input.dischargePlantId,
+      dischargeJettyId: input.dischargeJettyId,
+      ...(input.unloadingMasterId === undefined ? {} : { unloadingMasterId: input.unloadingMasterId }),
+    };
+    const updated = await tx.sealingReport.update({ where: { id }, data, include: reportInclude });
+    await tx.auditLog.create({
+      data: {
+        userId: actor.id,
+        action: "UPDATE",
+        entityType: "SHIPMENT_DESTINATION_ASSIGNMENT",
+        entityId: id,
+        oldData: asJson({
+          dischargePlantId: old.dischargePlantId,
+          dischargeJettyId: old.dischargeJettyId,
+          unloadingMasterId: old.unloadingMasterId,
+        }),
+        newData: asJson({
+          ...data,
+          unloadingMasterId: input.unloadingMasterId ?? old.unloadingMasterId,
+          assignedById: actor.id,
+          assignedAt: assignedAt.toISOString(),
+        }),
+      },
+    });
+    return updated;
+  });
 }
 
 export async function listPlantJettyAssignments(query: ListPlantJettyAssignmentsInput) {
@@ -257,20 +368,19 @@ export async function listPlantJettyAssignments(query: ListPlantJettyAssignments
     ...(query.plantId ? { plantId: query.plantId } : {}),
     ...(query.jettyId ? { jettyId: query.jettyId } : {}),
   };
-  const [items, total] = await Promise.all([
-    prisma.plantJettyAssignment.findMany({
-      where,
-      include: {
-        plant: { select: { id: true, code: true, name: true, isActive: true } },
-        jetty: { select: { id: true, name: true, isActive: true } },
-      },
-      skip: (query.page - 1) * query.limit,
-      take: query.limit,
-      orderBy: [{ plant: { sequence: "asc" } }, { jetty: { sequence: "asc" } }],
-    }),
-    prisma.plantJettyAssignment.count({ where }),
-  ]);
-  return { items, pagination: pageMeta(query.page, query.limit, total) };
+  const total = await prisma.plantJettyAssignment.count({ where });
+  const pagination = resolvePagination(query.page, query.limit, total);
+  const items = await prisma.plantJettyAssignment.findMany({
+    where,
+    include: {
+      plant: { select: { id: true, code: true, name: true, isActive: true } },
+      jetty: { select: { id: true, name: true, isActive: true } },
+    },
+    skip: pagination.skip,
+    take: pagination.take,
+    orderBy: [{ plant: { sequence: "asc" } }, { jetty: { sequence: "asc" } }, { id: "asc" }],
+  });
+  return { items, pagination: pagination.meta };
 }
 
 export async function createPlantJettyAssignment(input: CreatePlantJettyAssignmentInput, actor: Actor) {
@@ -327,53 +437,63 @@ export async function createReport(input: CreateReportInput, actor: Actor) {
 }
 
 export async function updateReport(id: string, input: UpdateReportInput, actor: Actor) {
-  const old = await prisma.sealingReport.findUnique({ where: { id } });
-  if (!old) throw new AppError(404, "Laporan sealing tidak ditemukan");
-  assertLoadingOwner(old.createdById, actor, old.loadingMasterId);
-  if (old.status !== "DRAFT") throw new AppError(400, "Hanya laporan DRAFT yang dapat diperbarui");
-  if (input.vesselId && input.vesselId !== old.vesselId && await prisma.sealingRecord.count({ where: { sealingReportId: id } }) > 0) throw new AppError(400, "Vessel tidak dapat diubah setelah titik segel compartment disiapkan");
-  if (input.vesselId && !(await prisma.vessel.findFirst({ where: { id: input.vesselId, isActive: true }, select: { id: true } }))) throw new AppError(400, "Vessel tidak tersedia atau tidak aktif");
-  if (input.originTerminalId && !(await prisma.terminal.findFirst({ where: { id: input.originTerminalId, isActive: true }, select: { id: true } }))) throw new AppError(400, "Terminal asal tidak tersedia atau tidak aktif");
-  if (input.destinationTerminalId && !(await prisma.terminal.findFirst({ where: { id: input.destinationTerminalId, isActive: true }, select: { id: true } }))) throw new AppError(400, "Terminal tujuan tidak tersedia atau tidak aktif");
-  const originId = input.originTerminalId ?? old.originTerminalId;
-  const destinationId = input.destinationTerminalId ?? old.destinationTerminalId;
-  if (destinationId && originId === destinationId) throw new AppError(400, "Terminal asal dan tujuan harus berbeda");
-  if (input.unloadingMasterId) {
-    const user = await prisma.user.findFirst({ where: { id: input.unloadingMasterId, isActive: true, role: { in: ["UNLOADING_MASTER", "SUPERVISOR"] } }, select: { id: true } });
-    if (!user) throw new AppError(400, "Unloading Master tidak tersedia atau role tidak sesuai");
-  }
-  const data = withoutUndefined({ ...input, ...(input.reportNo ? { reportNo: input.reportNo.toUpperCase() } : {}) });
-  const [updated] = await prisma.$transaction([prisma.sealingReport.update({ where: { id }, data, include: reportInclude }), audit(actor.id, "UPDATE", "SEALING_REPORT", id, old, data)]);
-  return updated;
+  return prisma.$transaction(async (rawTransaction) => {
+    const tx = rawTransaction as unknown as typeof prisma;
+    await tx.$queryRawUnsafe('SELECT "id" FROM "sealing_report" WHERE "id" = $1 FOR UPDATE', id);
+    const old = await tx.sealingReport.findUnique({ where: { id } });
+    if (!old) throw new AppError(404, "Laporan sealing tidak ditemukan");
+    if (old.shipmentNumber) throw new AppError(400, "Shipment canonical harus diperbarui melalui endpoint /shipments atau /voyages");
+    assertLoadingOwner(old.createdById, actor, old.loadingMasterId);
+    if (old.status !== "DRAFT") throw new AppError(400, "Hanya laporan DRAFT yang dapat diperbarui");
+    if (input.vesselId && input.vesselId !== old.vesselId && await tx.sealingRecord.count({ where: { sealingReportId: id } }) > 0) throw new AppError(400, "Vessel tidak dapat diubah setelah titik segel compartment disiapkan");
+    if (input.vesselId && !(await tx.vessel.findFirst({ where: { id: input.vesselId, isActive: true }, select: { id: true } }))) throw new AppError(400, "Vessel tidak tersedia atau tidak aktif");
+    if (input.originTerminalId && !(await tx.terminal.findFirst({ where: { id: input.originTerminalId, isActive: true }, select: { id: true } }))) throw new AppError(400, "Terminal asal tidak tersedia atau tidak aktif");
+    if (input.destinationTerminalId && !(await tx.terminal.findFirst({ where: { id: input.destinationTerminalId, isActive: true }, select: { id: true } }))) throw new AppError(400, "Terminal tujuan tidak tersedia atau tidak aktif");
+    const originId = input.originTerminalId ?? old.originTerminalId;
+    const destinationId = input.destinationTerminalId ?? old.destinationTerminalId;
+    if (destinationId && originId === destinationId) throw new AppError(400, "Terminal asal dan tujuan harus berbeda");
+    if (input.unloadingMasterId) {
+      const user = await tx.user.findFirst({ where: { id: input.unloadingMasterId, isActive: true, role: { in: ["UNLOADING_MASTER", "SUPERVISOR"] } }, select: { id: true } });
+      if (!user) throw new AppError(400, "Unloading Master tidak tersedia atau role tidak sesuai");
+    }
+    const data = withoutUndefined({ ...input, ...(input.reportNo ? { reportNo: input.reportNo.toUpperCase() } : {}) });
+    const updated = await tx.sealingReport.update({ where: { id }, data, include: reportInclude });
+    await tx.auditLog.create({ data: { userId: actor.id, action: "UPDATE", entityType: "SEALING_REPORT", entityId: id, oldData: asJson(old), newData: asJson(data) } });
+    return updated;
+  });
 }
 
 export async function deleteReport(id: string, actor: Actor) {
-  const old = await prisma.sealingReport.findUnique({ where: { id } });
-  if (!old) throw new AppError(404, "Laporan sealing tidak ditemukan");
-  assertLoadingOwner(old.createdById, actor, old.loadingMasterId);
-  if (old.status !== "DRAFT") throw new AppError(400, "Hanya laporan DRAFT yang dapat dihapus");
-  const [deleted] = await prisma.$transaction([prisma.sealingReport.delete({ where: { id } }), audit(actor.id, "DELETE", "SEALING_REPORT", id, old)]);
-  return deleted;
+  return prisma.$transaction(async (rawTransaction) => {
+    const tx = rawTransaction as unknown as typeof prisma;
+    await tx.$queryRawUnsafe('SELECT "id" FROM "sealing_report" WHERE "id" = $1 FOR UPDATE', id);
+    const old = await tx.sealingReport.findUnique({ where: { id } });
+    if (!old) throw new AppError(404, "Laporan sealing tidak ditemukan");
+    if (old.shipmentNumber) throw new AppError(400, "Shipment canonical harus dihapus melalui endpoint /shipments atau /voyages");
+    assertLoadingOwner(old.createdById, actor, old.loadingMasterId);
+    if (old.status !== "DRAFT") throw new AppError(400, "Hanya laporan DRAFT yang dapat dihapus");
+    const deleted = await tx.sealingReport.delete({ where: { id } });
+    await tx.auditLog.create({ data: { userId: actor.id, action: "DELETE", entityType: "SEALING_REPORT", entityId: id, oldData: asJson(old) } });
+    return deleted;
+  });
 }
 
 export async function deleteShipment(id: string, actor: Actor) {
-  const old = await prisma.sealingReport.findUnique({ where: { id } });
-  if (!old) throw new AppError(404, "Shipment/voyage tidak ditemukan");
-  assertLoadingOwner(old.createdById, actor, old.loadingMasterId);
-  if (old.status !== "DRAFT") throw new AppError(400, "Hanya shipment/voyage DRAFT yang dapat dihapus");
-  const [deleted] = await prisma.$transaction([
-    prisma.sealingReport.delete({ where: { id } }),
-    audit(actor.id, "DELETE", "SHIPMENT_VOYAGE", id, old),
-  ]);
-  return deleted;
-}
-
-async function editableReport(reportId: string, actor: Actor) {
-  const report = await prisma.sealingReport.findUnique({ where: { id: reportId }, select: { id: true, vesselId: true, createdById: true, loadingMasterId: true, status: true, formConfigurationSnapshot: true } });
-  if (!report) throw new AppError(404, "Laporan sealing tidak ditemukan");
-  assertLoadingOwner(report.createdById, actor, report.loadingMasterId);
-  if (report.status !== "DRAFT") throw new AppError(400, "Hanya laporan DRAFT yang dapat diedit");
-  return report;
+  return prisma.$transaction(async (rawTransaction) => {
+    const tx = rawTransaction as unknown as typeof prisma;
+    await tx.$queryRawUnsafe('SELECT "id" FROM "sealing_report" WHERE "id" = $1 FOR UPDATE', id);
+    const old = await tx.sealingReport.findUnique({
+      where: { id },
+      include: { baDocuments: { select: { id: true, phase: true, status: true } } },
+    });
+    if (!old) throw new AppError(404, "Shipment/voyage tidak ditemukan");
+    assertLoadingOwner(old.createdById, actor, old.loadingMasterId);
+    if (old.status !== "DRAFT") throw new AppError(400, "Hanya shipment/voyage DRAFT yang dapat dihapus");
+    if (old.baDocuments.length > 0) throw new AppError(409, "Shipment/voyage yang sudah memulai proses BA tidak dapat dihapus");
+    const deleted = await tx.sealingReport.delete({ where: { id } });
+    await tx.auditLog.create({ data: { userId: actor.id, action: "DELETE", entityType: "SHIPMENT_VOYAGE", entityId: id, oldData: asJson(old) } });
+    return deleted;
+  });
 }
 
 type FormSnapshotPoint = {
@@ -418,9 +538,19 @@ type FormConfigurationSnapshot = {
 
 type SnapshotTransactionClient = Pick<
   typeof prisma,
-  "sealingRecord" | "seal" | "auditLog" | "sealingReport" | "vesselFormProfile" |
-  "compartment" | "vesselSealingPoint" | "plantJettyAssignment" | "$queryRawUnsafe"
+  "sealingRecord" | "seal" | "sealVerification" | "auditLog" | "sealingReport" | "vesselFormProfile" |
+  "compartment" | "vesselSealingPoint" | "plantJettyAssignment" | "beritaAcaraDocument" | "$queryRawUnsafe"
 >;
+
+async function assertLoadingBaOpen(tx: SnapshotTransactionClient, reportId: string) {
+  const document = await tx.beritaAcaraDocument.findUnique({
+    where: { sealingReportId_phase: { sealingReportId: reportId, phase: "LOADING" } },
+    select: { status: true },
+  });
+  if (document?.status === "FINALIZED") {
+    throw new AppError(400, "Form dan nomor segel loading telah dikunci setelah BA LOADING difinalisasi");
+  }
+}
 type SnapshotProfile = Prisma.VesselFormProfileGetPayload<{
   include: { formVersion: true; sections: { include: { category: true } } };
 }>;
@@ -602,6 +732,7 @@ export async function prepareReportSeals(reportId: string, actor: Actor) {
     if (!report) throw new AppError(404, "Shipment/voyage tidak ditemukan");
     assertLoadingOwner(report.createdById, actor, report.loadingMasterId);
     if (report.status !== "DRAFT") throw new AppError(400, "Form hanya dapat diinisialisasi saat shipment/voyage DRAFT");
+    await assertLoadingBaOpen(database, reportId);
 
     const existingSnapshot = readFormSnapshot(report.formConfigurationSnapshot);
     if (report.formConfigurationSnapshot && !existingSnapshot) {
@@ -995,6 +1126,7 @@ async function loadLifecycleReport(tx: SnapshotTransactionClient, reportId: stri
         orderBy: [{ sequence: "asc" }, { createdAt: "asc" }],
       },
       signatures: {
+        where: { phase: null },
         select: {
           id: true, userId: true, role: true, name: true, signedAt: true,
           signatureUrl: true, signatureFileName: true, signatureMimeType: true,
@@ -1055,14 +1187,32 @@ async function evaluateLifecycleReport(tx: SnapshotTransactionClient, report: Li
   }
 
   if (isCanonicalShipment) {
+    const loadingBa = await tx.beritaAcaraDocument.findUnique({
+      where: { sealingReportId_phase: { sealingReportId: report.id, phase: "LOADING" } },
+      select: { status: true },
+    });
+    if (loadingBa?.status !== "FINALIZED") {
+      commonDepartureErrors.push({
+        code: "LOADING_BA_NOT_FINALIZED",
+        message: "BA LOADING wajib difinalisasi sebelum kapal berangkat",
+      });
+    }
+    const unloadingBa = await tx.beritaAcaraDocument.findUnique({
+      where: { sealingReportId_phase: { sealingReportId: report.id, phase: "UNLOADING" } },
+      select: { status: true },
+    });
+    if ((loadingBa || unloadingBa) && unloadingBa?.status !== "FINALIZED") {
+      finalizationErrors.push({
+        code: "UNLOADING_BA_NOT_FINALIZED",
+        message: "BA UNLOADING wajib difinalisasi sebelum shipment FINISH",
+      });
+    }
     const mandatoryFields: Array<[unknown, string]> = [
       [report.activityId, "activityId"],
       [report.voyageNumber, "voyageNumber"],
       [report.productId, "productId"],
       [report.loadingPlantId, "loadingPlantId"],
       [report.loadingJettyId, "loadingJettyId"],
-      [report.dischargePlantId, "dischargePlantId"],
-      [report.dischargeJettyId, "dischargeJettyId"],
       [report.sealingStatus, "sealingStatus"],
     ];
     const missingFields = mandatoryFields.filter(([value]) => value === null || value === "").map(([, name]) => name);
@@ -1075,12 +1225,18 @@ async function evaluateLifecycleReport(tx: SnapshotTransactionClient, report: Li
     }
     if (!report.product?.isActive) commonDepartureErrors.push({ code: "PRODUCT_INACTIVE", message: "Product shipment tidak aktif" });
     if (!report.loadingPlant?.isActive || !report.loadingJetty?.isActive) commonDepartureErrors.push({ code: "LOADING_LOCATION_INACTIVE", message: "Loading Plant dan Jetty harus aktif" });
-    if (!report.dischargePlant?.isActive || !report.dischargeJetty?.isActive) commonDepartureErrors.push({ code: "DISCHARGE_LOCATION_INACTIVE", message: "Discharge Plant dan Jetty harus aktif" });
     if (report.loadingPlantId && report.loadingJettyId && !(await tx.plantJettyAssignment.findUnique({ where: { plantId_jettyId: { plantId: report.loadingPlantId, jettyId: report.loadingJettyId } }, select: { id: true } }))) {
       commonDepartureErrors.push({ code: "LOADING_JETTY_MISMATCH", message: "Loading Jetty tidak terdaftar pada Loading Plant" });
     }
-    if (report.dischargePlantId && report.dischargeJettyId && !(await tx.plantJettyAssignment.findUnique({ where: { plantId_jettyId: { plantId: report.dischargePlantId, jettyId: report.dischargeJettyId } }, select: { id: true } }))) {
-      commonDepartureErrors.push({ code: "DISCHARGE_JETTY_MISMATCH", message: "Discharge Jetty tidak terdaftar pada Discharge Plant" });
+    if (!report.dischargePlantId || !report.dischargeJettyId) {
+      commonDepartureErrors.push({ code: "DESTINATION_ASSIGNMENT_REQUIRED", message: "Discharge Plant dan Jetty wajib dipilih sebelum kapal berangkat" });
+    } else {
+      if (!report.dischargePlant?.isActive || !report.dischargeJetty?.isActive) {
+        commonDepartureErrors.push({ code: "DISCHARGE_LOCATION_INACTIVE", message: "Discharge Plant dan Jetty harus aktif" });
+      }
+      if (!(await tx.plantJettyAssignment.findUnique({ where: { plantId_jettyId: { plantId: report.dischargePlantId, jettyId: report.dischargeJettyId } }, select: { id: true } }))) {
+        commonDepartureErrors.push({ code: "DISCHARGE_JETTY_MISMATCH", message: "Discharge Jetty tidak terdaftar pada Discharge Plant" });
+      }
     }
 
     snapshot = readFormSnapshot(report.formConfigurationSnapshot);
@@ -1264,7 +1420,17 @@ export async function transitionReport(
     }
 
     const transitionAt = occurredAt ?? new Date();
-    const finalSnapshot = transition === "finish" ? asJson({
+    const existingPhaseDocument = transition === "finish" && report.shipmentNumber
+      ? await tx.beritaAcaraDocument.findFirst({ where: { sealingReportId: id }, select: { id: true } })
+      : null;
+    const unloadingDocument = transition === "finish" && report.shipmentNumber && existingPhaseDocument
+      ? await tx.beritaAcaraDocument.findUnique({
+        where: { sealingReportId_phase: { sealingReportId: id, phase: "UNLOADING" } },
+        select: { status: true, snapshot: true },
+      })
+      : null;
+    const useLegacyFinalSnapshot = transition === "finish" && (!report.shipmentNumber || !existingPhaseDocument);
+    const legacyFinalSnapshot = useLegacyFinalSnapshot ? asJson({
       schemaVersion: 1,
       capturedAt: transitionAt.toISOString(),
       finalizedById: actor.id,
@@ -1318,6 +1484,13 @@ export async function transitionReport(
         })),
       })),
     }) : undefined;
+    let finalSnapshot = legacyFinalSnapshot;
+    if (transition === "finish" && report.shipmentNumber && existingPhaseDocument) {
+      if (!unloadingDocument || unloadingDocument.status !== "FINALIZED" || !unloadingDocument.snapshot) {
+        throw new AppError(409, "Snapshot BA UNLOADING final tidak tersedia");
+      }
+      finalSnapshot = asJson(unloadingDocument.snapshot);
+    }
     const data = {
       status: rule.to,
       sealingProcessStatus: rule.processStatus,
@@ -1370,6 +1543,7 @@ function buildGroupedForm(
     voyageNumber: string | null;
     formInitializedAt: Date | null;
     formConfigurationSnapshot: unknown;
+    baDocuments: Array<{ status: "DRAFT" | "FINALIZED" }>;
     sealingRecords: FormRecordWithVerifications[];
   },
   snapshot: FormConfigurationSnapshot,
@@ -1452,6 +1626,7 @@ function buildGroupedForm(
           status: record?.status ?? "NOT_SEALED",
           notes: record?.notes ?? null,
           seals: (record?.seals ?? [])
+            .filter((seal) => !["REMOVED", "REPLACED"].includes(seal.status))
             .sort((left, right) => left.installedAt.getTime() - right.installedAt.getTime() || left.sealNumber.localeCompare(right.sealNumber))
             .map((seal) => ({
               id: seal.id,
@@ -1491,7 +1666,7 @@ function buildGroupedForm(
       shipmentNumber: report.shipmentNumber,
       voyageNumber: report.voyageNumber,
       status: report.status,
-      isEditable: report.status === "DRAFT" && canLoad(actor) && (canManage(actor) || (report.loadingMasterId ?? report.createdById) === actor.id),
+      isEditable: report.status === "DRAFT" && !report.baDocuments.some((document) => document.status === "FINALIZED") && canLoad(actor) && (canManage(actor) || (report.loadingMasterId ?? report.createdById) === actor.id),
       vessel: snapshot.vessel,
       formVersion: snapshot.formVersion,
       vesselFormProfile: snapshot.vesselFormProfile,
@@ -1516,6 +1691,7 @@ export async function getReportFormStructure(reportId: string, actor: Actor) {
       voyageNumber: true,
       formInitializedAt: true,
       formConfigurationSnapshot: true,
+      baDocuments: { where: { phase: "LOADING" }, select: { status: true } },
       sealingRecords: { include: { seals: { include: { verifications: {
         select: { id: true, sealId: true, verifiedById: true, condition: true, verifiedAt: true, remarks: true },
         orderBy: [{ verifiedAt: "asc" }, { id: "asc" }],
@@ -1584,6 +1760,7 @@ async function mutateFormPoints(
     if (!report) throw new AppError(404, "Shipment/voyage tidak ditemukan");
     assertLoadingOwner(report.createdById, actor, report.loadingMasterId);
     if (report.status !== "DRAFT") throw new AppError(400, "Input form A-H hanya dapat diubah saat shipment/voyage DRAFT");
+    await assertLoadingBaOpen(tx, reportId);
 
     const snapshot = readFormSnapshot(report.formConfigurationSnapshot);
     if (!snapshot) throw new AppError(400, "Form A-H belum diinisialisasi untuk shipment/voyage ini");
@@ -1625,11 +1802,13 @@ async function mutateFormPoints(
           ? (options.replace ? null : existing?.notes ?? null)
           : input.notes,
         seals: input.seals === undefined
-          ? (options.replace ? [] : (existing?.seals ?? []).map((seal) => ({
-            sealNumber: seal.sealNumber,
-            installedAt: seal.installedAt,
-            notes: seal.notes,
-          })))
+          ? (options.replace ? [] : (existing?.seals ?? [])
+            .filter((seal) => !["REMOVED", "REPLACED"].includes(seal.status))
+            .map((seal) => ({
+              sealNumber: seal.sealNumber,
+              installedAt: seal.installedAt,
+              notes: seal.notes,
+            })))
           : input.seals,
       };
       validateResolvedFormPoint(resolved);
@@ -1664,7 +1843,7 @@ async function mutateFormPoints(
     const occupiedSeals = allDesiredSealNumbers.length === 0
       ? []
       : await tx.seal.findMany({
-        where: { sealNumber: { in: allDesiredSealNumbers, mode: "insensitive" } },
+        where: { sealingReportId: reportId, sealNumber: { in: allDesiredSealNumbers } },
         select: { sealNumber: true, sealingRecordId: true },
       });
     for (const occupied of occupiedSeals) {
@@ -1707,11 +1886,13 @@ async function mutateFormPoints(
         });
       }
       const desiredNumbers = [...desiredNumbersByPoint.get(input.vesselSealingPointId)!];
-      await tx.seal.deleteMany({
+      await tx.seal.updateMany({
         where: {
           sealingRecordId: recordId,
+          status: { notIn: ["REMOVED", "REPLACED"] },
           ...(desiredNumbers.length > 0 ? { sealNumber: { notIn: desiredNumbers } } : {}),
         },
+        data: { status: "REPLACED", removedAt: new Date() },
       });
     }
 
@@ -1720,7 +1901,9 @@ async function mutateFormPoints(
       const oldValue = oldValues.get(input.vesselSealingPointId);
       for (const sealInput of input.seals) {
         const sealNumber = normalizeSealNumber(sealInput.sealNumber);
-        const existingSeal = await tx.seal.findUnique({ where: { sealNumber } });
+        const existingSeal = await tx.seal.findUnique({
+          where: { sealingReportId_sealNumber: { sealingReportId: reportId, sealNumber } },
+        });
         const sealData = {
           status: "INSTALLED" as const,
           removedAt: null,
@@ -1731,12 +1914,16 @@ async function mutateFormPoints(
           if (existingSeal.sealingRecordId !== recordId) {
             throw new AppError(409, `Nomor segel ${sealNumber} sudah digunakan pada titik lain`);
           }
+          if (["REMOVED", "REPLACED"].includes(existingSeal.status)) {
+            throw new AppError(409, `Nomor segel ${sealNumber} sudah menjadi riwayat dalam shipment ini`);
+          }
           await tx.seal.update({ where: { id: existingSeal.id }, data: sealData });
         } else {
           await tx.seal.create({
             data: {
               id: randomUUID(),
               sealingRecordId: recordId,
+              sealingReportId: reportId,
               sealNumber,
               ...sealData,
             },
@@ -1865,107 +2052,238 @@ export async function batchWriteReportFormSection(
   return { reportId, section };
 }
 
-async function refreshDraftSealingProcessStatus(reportId: string) {
-  const report = await prisma.sealingReport.findUnique({
-    where: { id: reportId },
-    select: { status: true, formConfigurationSnapshot: true },
-  });
-  if (!report || report.status !== "DRAFT") return;
-  const snapshot = readFormSnapshot(report.formConfigurationSnapshot);
-  const sealingProcessStatus = snapshot
-    ? await calculateDraftSealingProcessStatus(prisma as unknown as SnapshotTransactionClient, reportId, snapshot)
-    : "NOT_STARTED";
-  await prisma.sealingReport.update({ where: { id: reportId }, data: { sealingProcessStatus } });
-}
-
 export async function listRecords(reportId: string, page: number, limit: number, actor?: Actor) {
   await getReport(reportId, actor);
-  const items = await prisma.sealingRecord.findMany({ where: { sealingReportId: reportId }, include: { vesselSealingPoint: { include: { compartment: true, sealingPointTemplate: true } }, seals: true }, skip: (page - 1) * limit, take: limit, orderBy: { createdAt: "asc" } });
   const total = await prisma.sealingRecord.count({ where: { sealingReportId: reportId } });
-  return { items, pagination: pageMeta(page, limit, total) };
+  const pagination = resolvePagination(page, limit, total);
+  const items = await prisma.sealingRecord.findMany({ where: { sealingReportId: reportId }, include: { vesselSealingPoint: { include: { compartment: true, sealingPointTemplate: true } }, seals: true }, skip: pagination.skip, take: pagination.take, orderBy: [{ createdAt: "asc" }, { id: "asc" }] });
+  return { items, pagination: pagination.meta };
 }
 
 export async function createRecord(reportId: string, input: CreateRecordInput, actor: Actor) {
-  const report = await editableReport(reportId, actor);
-  const point = await prisma.vesselSealingPoint.findUnique({ where: { id: input.vesselSealingPointId }, select: { vesselId: true, compartmentId: true, isActive: true, availability: true } });
-  if (!point || !point.isActive || point.availability === "INACTIVE") throw new AppError(400, "Titik sealing tidak tersedia");
-  if (point.vesselId !== report.vesselId) throw new AppError(400, "Titik sealing harus berasal dari vessel laporan");
-  const snapshot = readFormSnapshot(report.formConfigurationSnapshot);
-  const snapshotPoint = snapshot?.points.find((item) => item.vesselSealingPointId === input.vesselSealingPointId);
-  if (report.formConfigurationSnapshot && !snapshotPoint) throw new AppError(400, "Titik sealing tidak termasuk snapshot form laporan");
-  const id = randomUUID(); const data = withoutUndefined({ id, sealingReportId: reportId, vesselSealingPointId: input.vesselSealingPointId, createdById: actor.id, status: input.status, notes: input.notes, pointSnapshot: snapshotPoint ? asJson(snapshotPoint) : undefined });
-  const [created] = await prisma.$transaction([prisma.sealingRecord.create({ data }), audit(actor.id, "CREATE", "SEALING_RECORD", id, undefined, data)]);
-  await refreshDraftSealingProcessStatus(reportId);
-  return created;
-}
-
-async function editableRecord(id: string, actor: Actor) {
-  const record = await prisma.sealingRecord.findUnique({ where: { id }, include: { sealingReport: { select: { id: true, createdById: true, loadingMasterId: true, status: true } } } });
-  if (!record) throw new AppError(404, "Sealing record tidak ditemukan");
-  assertLoadingOwner(record.sealingReport.createdById, actor, record.sealingReport.loadingMasterId);
-  if (record.sealingReport.status !== "DRAFT") throw new AppError(400, "Record hanya dapat diubah saat laporan DRAFT");
-  return record;
+  return prisma.$transaction(async (rawTransaction) => {
+    const tx = rawTransaction as unknown as SnapshotTransactionClient;
+    await tx.$queryRawUnsafe('SELECT "id" FROM "sealing_report" WHERE "id" = $1 FOR UPDATE', reportId);
+    const report = await tx.sealingReport.findUnique({ where: { id: reportId }, select: { id: true, vesselId: true, createdById: true, loadingMasterId: true, status: true, formConfigurationSnapshot: true } });
+    if (!report) throw new AppError(404, "Laporan sealing tidak ditemukan");
+    assertLoadingOwner(report.createdById, actor, report.loadingMasterId);
+    if (report.status !== "DRAFT") throw new AppError(400, "Hanya laporan DRAFT yang dapat diedit");
+    await assertLoadingBaOpen(tx, reportId);
+    const point = await tx.vesselSealingPoint.findUnique({ where: { id: input.vesselSealingPointId }, select: { vesselId: true, isActive: true, availability: true } });
+    if (!point || !point.isActive || point.availability === "INACTIVE") throw new AppError(400, "Titik sealing tidak tersedia");
+    if (point.vesselId !== report.vesselId) throw new AppError(400, "Titik sealing harus berasal dari vessel laporan");
+    const snapshot = readFormSnapshot(report.formConfigurationSnapshot);
+    const snapshotPoint = snapshot?.points.find((item) => item.vesselSealingPointId === input.vesselSealingPointId);
+    if (report.formConfigurationSnapshot && !snapshotPoint) throw new AppError(400, "Titik sealing tidak termasuk snapshot form laporan");
+    const id = randomUUID();
+    const data = withoutUndefined({ id, sealingReportId: reportId, vesselSealingPointId: input.vesselSealingPointId, createdById: actor.id, status: input.status, notes: input.notes, pointSnapshot: snapshotPoint ? asJson(snapshotPoint) : undefined });
+    const created = await tx.sealingRecord.create({ data });
+    await tx.auditLog.create({ data: { userId: actor.id, action: "CREATE", entityType: "SEALING_RECORD", entityId: id, newData: asJson(data) } });
+    if (snapshot) await tx.sealingReport.update({ where: { id: reportId }, data: { sealingProcessStatus: await calculateDraftSealingProcessStatus(tx, reportId, snapshot) } });
+    return created;
+  });
 }
 
 export async function updateRecord(id: string, input: UpdateRecordInput, actor: Actor) {
-  const old = await editableRecord(id, actor); const data = withoutUndefined(input);
-  const [updated] = await prisma.$transaction([prisma.sealingRecord.update({ where: { id }, data }), audit(actor.id, "UPDATE", "SEALING_RECORD", id, old, data)]);
-  await refreshDraftSealingProcessStatus(old.sealingReport.id);
-  return updated;
+  return prisma.$transaction(async (rawTransaction) => {
+    const tx = rawTransaction as unknown as SnapshotTransactionClient;
+    const located = await tx.sealingRecord.findUnique({ where: { id }, select: { sealingReportId: true } });
+    if (!located) throw new AppError(404, "Sealing record tidak ditemukan");
+    await tx.$queryRawUnsafe('SELECT "id" FROM "sealing_report" WHERE "id" = $1 FOR UPDATE', located.sealingReportId);
+    const old = await tx.sealingRecord.findUnique({ where: { id }, include: { sealingReport: { select: { id: true, createdById: true, loadingMasterId: true, status: true, formConfigurationSnapshot: true } } } });
+    if (!old) throw new AppError(404, "Sealing record tidak ditemukan");
+    assertLoadingOwner(old.sealingReport.createdById, actor, old.sealingReport.loadingMasterId);
+    if (old.sealingReport.status !== "DRAFT") throw new AppError(400, "Record hanya dapat diubah saat laporan DRAFT");
+    await assertLoadingBaOpen(tx, old.sealingReport.id);
+    const data = withoutUndefined(input);
+    const updated = await tx.sealingRecord.update({ where: { id }, data });
+    await tx.auditLog.create({ data: { userId: actor.id, action: "UPDATE", entityType: "SEALING_RECORD", entityId: id, oldData: asJson(old), newData: asJson(data) } });
+    const snapshot = readFormSnapshot(old.sealingReport.formConfigurationSnapshot);
+    if (snapshot) await tx.sealingReport.update({ where: { id: old.sealingReport.id }, data: { sealingProcessStatus: await calculateDraftSealingProcessStatus(tx, old.sealingReport.id, snapshot) } });
+    return updated;
+  });
 }
 export async function deleteRecord(id: string, actor: Actor) {
-  const old = await editableRecord(id, actor);
-  const [deleted] = await prisma.$transaction([prisma.sealingRecord.delete({ where: { id } }), audit(actor.id, "DELETE", "SEALING_RECORD", id, old)]);
-  await refreshDraftSealingProcessStatus(old.sealingReport.id);
-  return deleted;
-}
-
-async function editableSeal(id: string, actor: Actor) {
-  const seal = await prisma.seal.findUnique({ where: { id }, include: { sealingRecord: { include: { sealingReport: { select: { id: true, createdById: true, loadingMasterId: true, status: true } } } } } });
-  if (!seal) throw new AppError(404, "Seal tidak ditemukan");
-  assertLoadingOwner(seal.sealingRecord.sealingReport.createdById, actor, seal.sealingRecord.sealingReport.loadingMasterId);
-  if (seal.sealingRecord.sealingReport.status !== "DRAFT") throw new AppError(400, "Seal hanya dapat diubah saat laporan DRAFT");
-  return seal;
+  return prisma.$transaction(async (rawTransaction) => {
+    const tx = rawTransaction as unknown as SnapshotTransactionClient;
+    const located = await tx.sealingRecord.findUnique({ where: { id }, select: { sealingReportId: true } });
+    if (!located) throw new AppError(404, "Sealing record tidak ditemukan");
+    await tx.$queryRawUnsafe('SELECT "id" FROM "sealing_report" WHERE "id" = $1 FOR UPDATE', located.sealingReportId);
+    const old = await tx.sealingRecord.findUnique({ where: { id }, include: { sealingReport: { select: { id: true, createdById: true, loadingMasterId: true, status: true, formConfigurationSnapshot: true } } } });
+    if (!old) throw new AppError(404, "Sealing record tidak ditemukan");
+    assertLoadingOwner(old.sealingReport.createdById, actor, old.sealingReport.loadingMasterId);
+    if (old.sealingReport.status !== "DRAFT") throw new AppError(400, "Record hanya dapat diubah saat laporan DRAFT");
+    await assertLoadingBaOpen(tx, old.sealingReport.id);
+    const deleted = await tx.sealingRecord.delete({ where: { id } });
+    await tx.auditLog.create({ data: { userId: actor.id, action: "DELETE", entityType: "SEALING_RECORD", entityId: id, oldData: asJson(old) } });
+    const snapshot = readFormSnapshot(old.sealingReport.formConfigurationSnapshot);
+    if (snapshot) await tx.sealingReport.update({ where: { id: old.sealingReport.id }, data: { sealingProcessStatus: await calculateDraftSealingProcessStatus(tx, old.sealingReport.id, snapshot) } });
+    return deleted;
+  });
 }
 
 export async function createSeal(recordId: string, input: CreateSealInput, actor: Actor) {
-  const record = await editableRecord(recordId, actor); const id = randomUUID();
-  const data = withoutUndefined({ id, sealingRecordId: recordId, sealNumber: input.sealNumber.toUpperCase(), installedAt: input.installedAt, notes: input.notes });
-  const [created] = await prisma.$transaction([prisma.seal.create({ data }), audit(actor.id, "INSTALL_SEAL", "SEAL", id, undefined, data)]);
-  await refreshDraftSealingProcessStatus(record.sealingReport.id);
-  return created;
+  return prisma.$transaction(async (rawTransaction) => {
+    const tx = rawTransaction as unknown as SnapshotTransactionClient;
+    const located = await tx.sealingRecord.findUnique({ where: { id: recordId }, select: { sealingReportId: true } });
+    if (!located) throw new AppError(404, "Sealing record tidak ditemukan");
+    await tx.$queryRawUnsafe('SELECT "id" FROM "sealing_report" WHERE "id" = $1 FOR UPDATE', located.sealingReportId);
+    const record = await tx.sealingRecord.findUnique({ where: { id: recordId }, include: { sealingReport: { select: { id: true, createdById: true, loadingMasterId: true, status: true, formConfigurationSnapshot: true } } } });
+    if (!record) throw new AppError(404, "Sealing record tidak ditemukan");
+    assertLoadingOwner(record.sealingReport.createdById, actor, record.sealingReport.loadingMasterId);
+    if (record.sealingReport.status !== "DRAFT") throw new AppError(400, "Seal hanya dapat diubah saat laporan DRAFT");
+    await assertLoadingBaOpen(tx, record.sealingReport.id);
+    const id = randomUUID();
+    const data = withoutUndefined({ id, sealingRecordId: recordId, sealingReportId: record.sealingReport.id, sealNumber: normalizeSealNumber(input.sealNumber), installedAt: input.installedAt, notes: input.notes });
+    const created = await tx.seal.create({ data });
+    await tx.auditLog.create({ data: { userId: actor.id, action: "INSTALL_SEAL", entityType: "SEAL", entityId: id, newData: asJson(data) } });
+    const snapshot = readFormSnapshot(record.sealingReport.formConfigurationSnapshot);
+    if (snapshot) await tx.sealingReport.update({ where: { id: record.sealingReport.id }, data: { sealingProcessStatus: await calculateDraftSealingProcessStatus(tx, record.sealingReport.id, snapshot) } });
+    return created;
+  });
 }
+
+type LockedEditableSeal = Prisma.SealGetPayload<Record<string, never>> & {
+  sealingRecord: {
+    sealingReport: {
+      id: string;
+      createdById: string;
+      loadingMasterId: string | null;
+      status: ReportStatus;
+      formConfigurationSnapshot: unknown;
+    };
+  };
+};
+
+async function mutateLegacySeal<T>(
+  id: string,
+  actor: Actor,
+  mutation: (tx: SnapshotTransactionClient, old: LockedEditableSeal) => Promise<T>,
+) {
+  return prisma.$transaction(async (rawTransaction) => {
+    const tx = rawTransaction as unknown as SnapshotTransactionClient;
+    const located = await tx.seal.findUnique({ where: { id }, select: { sealingReportId: true } });
+    if (!located) throw new AppError(404, "Seal tidak ditemukan");
+    await tx.$queryRawUnsafe('SELECT "id" FROM "sealing_report" WHERE "id" = $1 FOR UPDATE', located.sealingReportId);
+    const old = await tx.seal.findUnique({
+      where: { id },
+      include: {
+        sealingRecord: {
+          include: {
+            sealingReport: {
+              select: { id: true, createdById: true, loadingMasterId: true, status: true, formConfigurationSnapshot: true },
+            },
+          },
+        },
+      },
+    }) as LockedEditableSeal | null;
+    if (!old) throw new AppError(404, "Seal tidak ditemukan");
+    const report = old.sealingRecord.sealingReport;
+    assertLoadingOwner(report.createdById, actor, report.loadingMasterId);
+    if (report.status !== "DRAFT") throw new AppError(400, "Seal hanya dapat diubah saat laporan DRAFT");
+    await assertLoadingBaOpen(tx, report.id);
+    const result = await mutation(tx, old);
+    const snapshot = readFormSnapshot(report.formConfigurationSnapshot);
+    if (snapshot) await tx.sealingReport.update({ where: { id: report.id }, data: { sealingProcessStatus: await calculateDraftSealingProcessStatus(tx, report.id, snapshot) } });
+    return result;
+  });
+}
+
 export async function updateSeal(id: string, input: UpdateSealInput, actor: Actor) {
-  const old = await editableSeal(id, actor); const data = withoutUndefined({ ...input, ...(input.sealNumber ? { sealNumber: input.sealNumber.toUpperCase() } : {}) });
-  const [updated] = await prisma.$transaction([prisma.seal.update({ where: { id }, data }), audit(actor.id, "UPDATE", "SEAL", id, old, data)]);
-  await refreshDraftSealingProcessStatus(old.sealingRecord.sealingReport.id);
-  return updated;
+  return mutateLegacySeal(id, actor, async (tx, old) => {
+    if (input.sealNumber !== undefined && ["REMOVED", "REPLACED"].includes(old.status) && normalizeSealNumber(input.sealNumber) !== old.sealNumber) {
+      throw new AppError(400, "Nomor segel yang sudah menjadi riwayat tidak dapat diubah");
+    }
+    const data = withoutUndefined({ ...input, ...(input.sealNumber ? { sealNumber: normalizeSealNumber(input.sealNumber) } : {}) });
+    const updated = await tx.seal.update({ where: { id }, data });
+    await tx.auditLog.create({ data: { userId: actor.id, action: "UPDATE", entityType: "SEAL", entityId: id, oldData: asJson(old), newData: asJson(data) } });
+    return updated;
+  });
 }
 export async function removeSeal(id: string, notes: string | null | undefined, actor: Actor) {
-  const old = await editableSeal(id, actor); if (old.status === "REMOVED" || old.status === "REPLACED") throw new AppError(400, "Seal sudah tidak aktif");
-  const data = { status: "REMOVED" as const, removedAt: new Date(), ...(notes === undefined ? {} : { notes }) };
-  const [updated] = await prisma.$transaction([prisma.seal.update({ where: { id }, data }), audit(actor.id, "REMOVE_SEAL", "SEAL", id, old, data)]);
-  await refreshDraftSealingProcessStatus(old.sealingRecord.sealingReport.id);
-  return updated;
+  return mutateLegacySeal(id, actor, async (tx, old) => {
+    if (old.status === "REMOVED" || old.status === "REPLACED") throw new AppError(400, "Seal sudah tidak aktif");
+    const data = { status: "REMOVED" as const, removedAt: new Date(), ...(notes === undefined ? {} : { notes }) };
+    const updated = await tx.seal.update({ where: { id }, data });
+    await tx.auditLog.create({ data: { userId: actor.id, action: "REMOVE_SEAL", entityType: "SEAL", entityId: id, oldData: asJson(old), newData: asJson(data) } });
+    return updated;
+  });
 }
 export async function replaceSeal(id: string, input: CreateSealInput, actor: Actor) {
-  const old = await editableSeal(id, actor); if (old.status === "REMOVED" || old.status === "REPLACED") throw new AppError(400, "Seal sudah tidak aktif");
-  const newId = randomUUID(); const oldData = { status: "REPLACED" as const, removedAt: new Date() };
-  const newData = withoutUndefined({ id: newId, sealingRecordId: old.sealingRecordId, sealNumber: input.sealNumber.toUpperCase(), installedAt: input.installedAt, notes: input.notes });
-  const [, created] = await prisma.$transaction([prisma.seal.update({ where: { id }, data: oldData }), prisma.seal.create({ data: newData }), audit(actor.id, "REPLACE_SEAL", "SEAL", id, old, { replacementSealId: newId }), audit(actor.id, "INSTALL_SEAL", "SEAL", newId, undefined, newData)]);
-  await refreshDraftSealingProcessStatus(old.sealingRecord.sealingReport.id);
-  return created;
+  return mutateLegacySeal(id, actor, async (tx, old) => {
+    if (old.status === "REMOVED" || old.status === "REPLACED") throw new AppError(400, "Seal sudah tidak aktif");
+    const newId = randomUUID();
+    const oldData = { status: "REPLACED" as const, removedAt: new Date() };
+    const newData = withoutUndefined({ id: newId, sealingRecordId: old.sealingRecordId, sealingReportId: old.sealingReportId, sealNumber: normalizeSealNumber(input.sealNumber), installedAt: input.installedAt, notes: input.notes });
+    await tx.seal.update({ where: { id }, data: oldData });
+    const created = await tx.seal.create({ data: newData });
+    await tx.auditLog.create({ data: { userId: actor.id, action: "REPLACE_SEAL", entityType: "SEAL", entityId: id, oldData: asJson(old), newData: asJson({ replacementSealId: newId }) } });
+    await tx.auditLog.create({ data: { userId: actor.id, action: "INSTALL_SEAL", entityType: "SEAL", entityId: newId, newData: asJson(newData) } });
+    return created;
+  });
 }
 
 export async function verifySeal(id: string, input: VerifySealInput, actor: Actor) {
-  const seal = await prisma.seal.findUnique({ where: { id }, include: { sealingRecord: { include: { sealingReport: { select: { status: true, unloadingMasterId: true } } } } } });
-  if (!seal) throw new AppError(404, "Seal tidak ditemukan");
-  if (seal.sealingRecord.sealingReport.status !== "SANDAR") throw new AppError(400, "Seal hanya dapat diperiksa ketika kapal berstatus SANDAR");
-  assertUnloadingAssignment(seal.sealingRecord.sealingReport.unloadingMasterId, actor);
-  if (["REMOVED", "REPLACED"].includes(seal.status)) throw new AppError(400, "Seal yang sudah dilepas/diganti tidak dapat diverifikasi");
-  const verificationId = randomUUID(); const sealStatus = input.condition === "BROKEN" || input.condition === "MISSING" ? "BROKEN" as const : "VERIFIED" as const;
-  const data = withoutUndefined({ id: verificationId, sealId: id, verifiedById: actor.id, condition: input.condition, verifiedAt: input.verifiedAt, remarks: input.remarks });
-  const [verification] = await prisma.$transaction([prisma.sealVerification.create({ data }), prisma.seal.update({ where: { id }, data: { status: sealStatus } }), audit(actor.id, "VERIFY", "SEAL", id, { status: seal.status }, { status: sealStatus, verificationId })]); return verification;
+  return prisma.$transaction(async (rawTransaction) => {
+    const tx = rawTransaction as unknown as SnapshotTransactionClient;
+    const located = await tx.seal.findUnique({ where: { id }, select: { sealingReportId: true } });
+    if (!located) throw new AppError(404, "Seal tidak ditemukan");
+    await tx.$queryRawUnsafe('SELECT "id" FROM "sealing_report" WHERE "id" = $1 FOR UPDATE', located.sealingReportId);
+    const seal = await tx.seal.findUnique({
+      where: { id },
+      include: {
+        sealingRecord: {
+          include: {
+            sealingReport: { select: { id: true, status: true, unloadingMasterId: true } },
+          },
+        },
+      },
+    });
+    if (!seal) throw new AppError(404, "Seal tidak ditemukan");
+    const report = seal.sealingRecord.sealingReport;
+    if (report.status !== "SANDAR") throw new AppError(400, "Seal hanya dapat diperiksa ketika kapal berstatus SANDAR");
+    assertUnloadingAssignment(report.unloadingMasterId, actor);
+    const unloadingBa = await tx.beritaAcaraDocument.findUnique({
+      where: { sealingReportId_phase: { sealingReportId: report.id, phase: "UNLOADING" } },
+      select: { status: true },
+    });
+    if (unloadingBa?.status === "FINALIZED") {
+      throw new AppError(400, "Pemeriksaan segel telah dikunci setelah BA UNLOADING difinalisasi");
+    }
+    if (["REMOVED", "REPLACED"].includes(seal.status)) throw new AppError(400, "Seal yang sudah dilepas/diganti tidak dapat diverifikasi");
+    const verificationId = randomUUID();
+    const sealStatus = input.condition === "BROKEN" || input.condition === "MISSING" ? "BROKEN" as const : "VERIFIED" as const;
+    const data = withoutUndefined({ id: verificationId, sealId: id, verifiedById: actor.id, condition: input.condition, verifiedAt: input.verifiedAt, remarks: input.remarks });
+    const verification = await tx.sealVerification.create({ data });
+    await tx.seal.update({ where: { id }, data: { status: sealStatus } });
+    await tx.auditLog.create({
+      data: {
+        userId: actor.id,
+        action: "VERIFY",
+        entityType: "SEAL",
+        entityId: id,
+        oldData: asJson({ status: seal.status }),
+        newData: asJson({ status: sealStatus, verificationId }),
+      },
+    });
+    return verification;
+  });
 }
 
-export async function listAudits(query: ListAuditsInput) { const where: Prisma.AuditLogWhereInput = { ...(query.entityType ? { entityType: query.entityType.toUpperCase() } : {}), ...(query.entityId ? { entityId: query.entityId } : {}), ...(query.action ? { action: query.action } : {}) }; const items = await prisma.auditLog.findMany({ where, include: { user: { select: { id: true, username: true, fullName: true } } }, skip: (query.page - 1) * query.limit, take: query.limit, orderBy: { createdAt: "desc" } }); const total = await prisma.auditLog.count({ where }); return { items, pagination: pageMeta(query.page, query.limit, total) }; }
+export async function listAudits(query: ListAuditsInput) {
+  const where: Prisma.AuditLogWhereInput = {
+    ...(query.entityType ? { entityType: query.entityType.toUpperCase() } : {}),
+    ...(query.entityId ? { entityId: query.entityId } : {}),
+    ...(query.action ? { action: query.action } : {}),
+  };
+  const total = await prisma.auditLog.count({ where });
+  const pagination = resolvePagination(query.page, query.limit, total);
+  const items = await prisma.auditLog.findMany({
+    where,
+    include: { user: { select: { id: true, username: true, fullName: true } } },
+    skip: pagination.skip,
+    take: pagination.take,
+    orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+  });
+  return { items, pagination: pagination.meta };
+}

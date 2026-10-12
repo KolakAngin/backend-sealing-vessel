@@ -13,7 +13,7 @@ export const createReportBody = z.object({
   portName: nullableText(150), remarks: nullableText(2_000),
 }).strict();
 export const updateReportBody = createReportBody.partial().refine((v) => Object.keys(v).length > 0, "Minimal satu field harus dikirim");
-export const shipmentBody = z.object({
+const shipmentBaseBody = z.object({
   vesselId: uuid,
   activityId: uuid,
   reportDateTime: z.coerce.date(),
@@ -22,16 +22,39 @@ export const shipmentBody = z.object({
   productId: uuid,
   loadingPlantId: uuid,
   loadingJettyId: uuid,
-  dischargePlantId: uuid,
-  dischargeJettyId: uuid,
+  dischargePlantId: uuid.optional(),
+  dischargeJettyId: uuid.optional(),
   sealingStatus: z.string().trim().min(1).max(50).optional(),
   loadingMasterId: uuid.optional(),
   unloadingMasterId: uuid.nullable().optional(),
   loadingMasterSurveyorName: nullableText(150),
   remarks: nullableText(2_000),
 }).strict();
-export const updateShipmentBody = shipmentBody.partial()
+
+function validateDestinationPair(
+  value: { dischargePlantId?: string | undefined; dischargeJettyId?: string | undefined },
+  context: z.RefinementCtx,
+) {
+  const hasPlant = value.dischargePlantId !== undefined;
+  const hasJetty = value.dischargeJettyId !== undefined;
+  if (hasPlant !== hasJetty) {
+    context.addIssue({
+      code: "custom",
+      path: hasPlant ? ["dischargeJettyId"] : ["dischargePlantId"],
+      message: "Discharge plant dan discharge jetty harus dikirim sebagai pasangan",
+    });
+  }
+}
+
+export const shipmentBody = shipmentBaseBody.superRefine(validateDestinationPair);
+export const updateShipmentBody = shipmentBaseBody.partial()
+  .superRefine(validateDestinationPair)
   .refine((v) => Object.keys(v).length > 0, "Minimal satu field harus dikirim");
+export const destinationAssignmentBody = z.object({
+  dischargePlantId: uuid,
+  dischargeJettyId: uuid,
+  unloadingMasterId: uuid.optional(),
+}).strict();
 export const listReportsQuery = paging.extend({
   search: z.string().trim().min(1).max(150).optional(),
   vesselId: uuid.optional(),
@@ -53,6 +76,7 @@ export const createReportRequest = z.object({ body: createReportBody, params: z.
 export const updateReportRequest = z.object({ body: updateReportBody, params: z.object({ id: uuid }), query: z.object({}) });
 export const createShipmentRequest = z.object({ body: shipmentBody, params: z.object({}), query: z.object({}) });
 export const updateShipmentRequest = z.object({ body: updateShipmentBody, params: z.object({ id: uuid }), query: z.object({}) });
+export const destinationAssignmentRequest = z.object({ body: destinationAssignmentBody, params: z.object({ id: uuid }), query: z.object({}) });
 export const listReportsRequest = z.object({ body: z.unknown(), params: z.object({}), query: listReportsQuery });
 export const reportDetailRequest = detail;
 export const transitionReportRequest = z.object({ body: z.object({ remarks: nullableText(2_000) }).strict(), params: z.object({ id: uuid }), query: z.object({}) });
@@ -131,7 +155,9 @@ export const removeSealRequest = z.object({ body: z.object({ notes: nullableText
 export const replaceSealRequest = z.object({ body: createSealBody, params: z.object({ id: uuid }), query: z.object({}) });
 export const verifySealRequest = z.object({ body: z.object({ condition: z.enum(["GOOD", "DAMAGED", "BROKEN", "MISSING", "OTHER"]), verifiedAt: z.coerce.date().optional(), remarks: nullableText(2_000) }).strict(), params: z.object({ id: uuid }), query: z.object({}) });
 
-export const signatureBody = z.object({ userId: uuid.nullable().optional(), role: z.enum(["CHIEF_OFFICER", "TERMINAL_REPRESENTATIVE", "SURVEYOR"]), name: z.string().trim().min(1).max(150), signatureUrl: nullableText(2_000), signedAt: z.coerce.date().nullable().optional() }).strict();
+const signatureRole = z.enum(["CHIEF_OFFICER", "TERMINAL_REPRESENTATIVE", "SURVEYOR"]);
+const beritaAcaraPhase = z.string().trim().toUpperCase().pipe(z.enum(["LOADING", "UNLOADING"]));
+export const signatureBody = z.object({ userId: uuid.nullable().optional(), role: signatureRole, name: z.string().trim().min(1).max(150), signatureUrl: nullableText(2_000), signedAt: z.coerce.date().nullable().optional() }).strict();
 export const upsertSignatureBody = signatureBody.omit({ role: true });
 export const updateSignatureBody = signatureBody.omit({ role: true }).partial().refine((v) => Object.keys(v).length > 0, "Minimal satu field harus dikirim");
 export const createSignatureRequest = z.object({ body: signatureBody, params: z.object({ reportId: uuid }), query: z.object({}) });
@@ -139,14 +165,19 @@ export const upsertSignatureRequest = z.object({ body: upsertSignatureBody, para
 export const listSignaturesRequest = z.object({ body: z.unknown(), params: z.object({ reportId: uuid }), query: z.object({}) });
 export const updateSignatureRequest = z.object({ body: updateSignatureBody, params: z.object({ id: uuid }), query: z.object({}) });
 export const signatureDetailRequest = detail;
+export const baDocumentRequest = z.object({ body: z.unknown(), params: z.object({ reportId: uuid, phase: beritaAcaraPhase }), query: z.object({}) });
+export const finalizeBaDocumentRequest = z.object({ body: z.object({}).strict(), params: z.object({ reportId: uuid, phase: beritaAcaraPhase }), query: z.object({}) });
+export const listBaSignaturesRequest = baDocumentRequest;
+export const upsertBaSignatureRequest = z.object({ body: upsertSignatureBody, params: z.object({ reportId: uuid, phase: beritaAcaraPhase, role: signatureRole }), query: z.object({}) });
 
 export const listAuditsQuery = paging.extend({ entityType: z.string().trim().max(50).optional(), entityId: uuid.optional(), action: z.enum(["CREATE", "UPDATE", "DELETE", "SUBMIT", "VERIFY", "APPROVE", "REJECT", "INSTALL_SEAL", "REMOVE_SEAL", "REPLACE_SEAL", "DEPART", "ARRIVE", "FINISH", "FINALIZE"]).optional() });
 export const listAuditsRequest = z.object({ body: z.unknown(), params: z.object({}), query: listAuditsQuery });
 
 export type CreateReportInput = z.infer<typeof createReportBody>; export type UpdateReportInput = z.infer<typeof updateReportBody>; export type ListReportsInput = z.infer<typeof listReportsQuery>;
-export type CreateShipmentInput = z.infer<typeof shipmentBody>; export type UpdateShipmentInput = z.infer<typeof updateShipmentBody>;
+export type CreateShipmentInput = z.infer<typeof shipmentBody>; export type UpdateShipmentInput = z.infer<typeof updateShipmentBody>; export type DestinationAssignmentInput = z.infer<typeof destinationAssignmentBody>;
 export type CreatePlantJettyAssignmentInput = z.infer<typeof createPlantJettyAssignmentBody>; export type ListPlantJettyAssignmentsInput = z.infer<typeof listPlantJettyAssignmentsQuery>;
 export type CreateRecordInput = z.infer<typeof createRecordBody>; export type UpdateRecordInput = z.infer<typeof updateRecordBody>;
 export type CreateSealInput = z.infer<typeof createSealBody>; export type UpdateSealInput = z.infer<typeof updateSealBody>; export type VerifySealInput = z.infer<typeof verifySealRequest>["body"];
 export type FormPointWriteInput = z.infer<typeof formPointWriteBody>; export type FormPointPatchInput = z.infer<typeof formPointPatchBody>; export type FormSectionBatchInput = z.infer<typeof formSectionBatchBody>;
 export type SignatureInput = z.infer<typeof signatureBody>; export type UpsertSignatureInput = z.infer<typeof upsertSignatureBody>; export type UpdateSignatureInput = z.infer<typeof updateSignatureBody>; export type ListAuditsInput = z.infer<typeof listAuditsQuery>;
+export type BeritaAcaraPhaseInput = z.infer<typeof beritaAcaraPhase>;

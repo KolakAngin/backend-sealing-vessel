@@ -744,15 +744,16 @@ Urutan lengkap bila Admin menjalankan transaksi dari awal sampai akhir adalah:
 4. `PUT /shipments/:id/form/points/:pointId` — isi titik dan nomor segel.
 5. `POST /shipments/:id/attachments` atau endpoint attachment section/record — tambah bukti loading.
 6. `POST /shipments/:id/signatures` dan `PUT /signatures/:id/file` — tambah tanda tangan jika tersedia.
-7. `GET /shipments/:id/validation` — pastikan validasi depart lolos.
-8. `POST /shipments/:id/depart` — ubah `DRAFT` menjadi `BERLAYAR`.
-9. `POST /shipments/:id/arrive` — ubah `BERLAYAR` menjadi `SANDAR`.
-10. `POST /seals/:id/verify` — verifikasi semua segel aktif.
-11. `POST /verifications/:id/attachments` — tambah bukti verifikasi jika tersedia.
-12. `GET /shipments/:id/validation` — pastikan validasi finalisasi lolos.
-13. `POST /shipments/:id/finalize` — kunci transaksi menjadi `FINISH`.
-14. `POST /shipments/:id/pdf` dan `POST /shipments/:id/xlsx` — buat dokumen resmi.
-15. `GET /shipments/:id/pdf/download` atau `/xlsx/download` — unduh hasil.
+7. `PUT /shipments/:id/destination-assignment` — pilih discharge Plant–Jetty setelah sealing `READY`.
+8. `GET /shipments/:id/validation` — pastikan validasi depart lolos.
+9. `POST /shipments/:id/depart` — ubah `DRAFT` menjadi `BERLAYAR`.
+10. `POST /shipments/:id/arrive` — ubah `BERLAYAR` menjadi `SANDAR`.
+11. `POST /seals/:id/verify` — verifikasi semua segel aktif.
+12. `POST /verifications/:id/attachments` — tambah bukti verifikasi jika tersedia.
+13. `GET /shipments/:id/validation` — pastikan validasi finalisasi lolos.
+14. `POST /shipments/:id/finalize` — kunci transaksi menjadi `FINISH`.
+15. `POST /shipments/:id/pdf` — buat/ambil dokumen final canonical; untuk phase-aware endpoint ini mengarah ke BA UNLOADING.
+16. `POST /shipments/:id/xlsx` — buat export spreadsheet operasional/legacy, bukan Berita Acara resmi.
 
 ## 3.8 Melihat audit log
 
@@ -785,6 +786,7 @@ Supervisor mengawasi seluruh operasi shipment. Supervisor dapat bekerja lintas a
 | Membuat shipment | `POST /shipments` |
 | Mengubah/menghapus draft | `PATCH/DELETE /shipments/:id` |
 | Menentukan LM/UM | Field assignment pada create/update shipment |
+| Menentukan destination setelah sealing READY | `PUT /shipments/:id/destination-assignment` |
 | Menyiapkan Form A–H | `POST /shipments/:id/prepare-seals` |
 | Mengelola Form A–H | Endpoint `/shipments/:reportId/form/...` |
 | Mengelola segel loading | Endpoint record/seal pada status `DRAFT` |
@@ -949,6 +951,8 @@ Inisialisasi snapshot Form A–H
   ↓
 Isi titik dan nomor segel
   ↓
+Pilih discharge Plant–Jetty
+  ↓
 Unggah dokumentasi loading
   ↓
 Isi tanda tangan bila tersedia
@@ -1009,8 +1013,6 @@ curl -X POST http://localhost:5001/api/v1/shipments \
     "productId":"<PRODUCT_ID>",
     "loadingPlantId":"<LOADING_PLANT_ID>",
     "loadingJettyId":"<LOADING_JETTY_ID>",
-    "dischargePlantId":"<DISCHARGE_PLANT_ID>",
-    "dischargeJettyId":"<DISCHARGE_JETTY_ID>",
     "sealingStatus":"READY",
     "unloadingMasterId":"<UNLOADING_MASTER_USER_ID>",
     "loadingMasterSurveyorName":"Nama Surveyor",
@@ -1028,10 +1030,9 @@ Semua field berikut wajib:
 - `voyageNumber`;
 - `shipmentNumber` yang harus unik;
 - `productId`;
-- loading dan discharge Plant–Jetty;
-- `sealingStatus`.
+- loading Plant–Jetty.
 
-`unloadingMasterId` boleh belum diisi saat membuat draft, tetapi wajib sebelum depart.
+`dischargePlantId` dan `dischargeJettyId` boleh belum diisi saat membuat draft. Jika destination sudah diketahui pada create, keduanya harus dikirim bersama dan harus membentuk pasangan Plant–Jetty aktif yang valid. `sealingStatus` opsional dan diberi default oleh server. `unloadingMasterId` boleh belum diisi saat membuat draft, tetapi wajib sebelum depart.
 
 Backend saat ini belum menyediakan endpoint daftar user untuk Loading Master. ID Unloading Master harus diperoleh dari pilihan yang sebelumnya disediakan Admin/frontend. Jika frontend perlu memuat pilihan tersebut langsung dari backend untuk role LM, diperlukan endpoint lookup assignee baru.
 
@@ -1061,6 +1062,8 @@ curl -X PATCH http://localhost:5001/api/v1/shipments/<SHIPMENT_ID> \
 ```
 
 Loading Master hanya dapat mengubah shipment assignment yang masih `DRAFT`. Jika vessel salah, ganti sebelum menyiapkan Form A–H.
+
+Destination tidak dapat diubah melalui `PATCH`; gunakan endpoint `destination-assignment` setelah penyegelan berstatus `READY`.
 
 Menghapus draft yang tidak jadi digunakan:
 
@@ -1141,7 +1144,10 @@ Aturan status titik:
 | `NOT_SEALED` | Tidak boleh mempunyai nomor segel |
 | `NOT_APPLICABLE` | Tidak boleh mempunyai nomor segel dan tidak menghalangi depart |
 
-Nomor segel disimpan uppercase dan harus unik secara global.
+Nomor segel dinormalisasi `trim + uppercase` dan harus unik dalam satu shipment.
+Nomor yang sama boleh digunakan pada shipment berbeda. Nomor berstatus
+`REMOVED` atau `REPLACED` tetap menjadi riwayat dan tidak boleh digunakan pada
+titik lain dalam shipment yang sama.
 
 ## 5.10 Langkah 8 — Mengubah sebagian atau mengosongkan titik
 
@@ -1333,9 +1339,39 @@ GET    /api/v1/signatures/<SIGNATURE_ID>/download
 DELETE /api/v1/signatures/<SIGNATURE_ID>
 ```
 
-Maksimal satu tanda tangan per jenis dalam satu shipment. Tanda tangan dapat diubah oleh LM/UM assignee, Supervisor, atau Admin sebelum `FINISH`.
+Endpoint tersebut adalah signature legacy dan tetap maksimal satu tanda tangan per jenis dalam satu shipment. Untuk BA `LOADING`, gunakan endpoint phase-aware berikut agar slot tidak bercampur dengan BA `UNLOADING`:
 
-## 5.15 Langkah 12 — Validasi kesiapan depart
+```text
+GET  /api/v1/shipments/<SHIPMENT_ID>/ba/loading/signatures
+PUT  /api/v1/shipments/<SHIPMENT_ID>/ba/loading/signatures/CHIEF_OFFICER
+PUT  /api/v1/shipments/<SHIPMENT_ID>/ba/loading/signatures/SURVEYOR
+PUT  /api/v1/shipments/<SHIPMENT_ID>/ba/loading/signatures/TERMINAL_REPRESENTATIVE
+POST /api/v1/shipments/<SHIPMENT_ID>/ba/loading/finalize
+POST /api/v1/shipments/<SHIPMENT_ID>/ba/loading/pdf
+GET  /api/v1/shipments/<SHIPMENT_ID>/ba/loading/pdf/preview
+GET  /api/v1/shipments/<SHIPMENT_ID>/ba/loading/pdf/download
+```
+
+Loading Master harus merupakan assignee dan shipment masih `DRAFT`. Kumpulkan signature pada langkah ini, tentukan destination pada langkah berikutnya, lalu panggil finalisasi. Finalisasi memerlukan sealing `READY`, destination valid, serta ketiga role; sesudahnya form, segel, attachment loading, destination, dan signature LOADING dikunci. PDF selalu dibuat dari snapshot final immutable dan generate ulang mengembalikan checksum yang sama. Upload file signature tetap memakai `PUT /signatures/:id/file`.
+
+## 5.15 Langkah 12 — Menentukan destination setelah sealing READY
+
+Destination adalah pasangan discharge Plant–Jetty tempat kapal akan bongkar. Pemilihan dilakukan oleh assigned Loading Master, Supervisor, atau Admin setelah seluruh sealing required selesai dan `sealingProcessStatus` menjadi `READY`:
+
+```bash
+curl -X PUT http://localhost:5001/api/v1/shipments/<SHIPMENT_ID>/destination-assignment \
+  -H "Authorization: Bearer <LOADING_MASTER_TOKEN>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "dischargePlantId":"<DISCHARGE_PLANT_ID>",
+    "dischargeJettyId":"<DISCHARGE_JETTY_ID>",
+    "unloadingMasterId":"<UNLOADING_MASTER_USER_ID>"
+  }'
+```
+
+`unloadingMasterId` opsional pada payload ini. Shipment harus masih `DRAFT`; pasangan harus aktif dan terdaftar pada master `PlantJettyAssignment`. Loading Master lain dan Unloading Master ditolak. Assignment dicatat dalam audit beserta actor, nilai lama, nilai baru, dan waktu. Setelah depart destination terkunci.
+
+## 5.16 Langkah 13 — Validasi kesiapan depart
 
 ```bash
 curl http://localhost:5001/api/v1/shipments/<SHIPMENT_ID>/validation \
@@ -1360,13 +1396,15 @@ Jika `allowed=false`, selesaikan semua masalah pada `errors`. Pemeriksaan depart
 - shipment masih `DRAFT`;
 - master referensi masih aktif;
 - kombinasi Plant–Jetty valid;
+- destination discharge Plant–Jetty sudah lengkap;
 - LM dan UM aktif dengan role yang benar;
 - snapshot Form A–H tersedia;
 - seluruh titik required sudah `SEALED` dengan segel aktif atau `NOT_APPLICABLE`.
+- BA LOADING sudah final; jika belum, error memuat kode `LOADING_BA_NOT_FINALIZED`.
 
-Attachment dan signature belum menjadi syarat wajib lifecycle.
+Attachment tetap opsional. Tiga signature LOADING wajib pada gate finalisasi BA, bukan diperiksa ulang dari data live saat depart.
 
-## 5.16 Langkah 13 — Memberangkatkan kapal
+## 5.17 Langkah 14 — Memberangkatkan kapal
 
 ```bash
 curl -X POST http://localhost:5001/api/v1/shipments/<SHIPMENT_ID>/depart \
@@ -1387,7 +1425,7 @@ Jika berhasil:
 - data loading dikunci;
 - shipment mulai tersedia untuk proses Unloading Master yang ditugaskan.
 
-## 5.17 Setelah depart
+## 5.18 Setelah depart
 
 Loading Master masih dapat membaca shipment assignment, Form A–H, file, signature, dan hasil akhir. Loading Master tidak dapat menjalankan `arrive`, memverifikasi segel, atau menjalankan `finish`.
 
@@ -1406,7 +1444,7 @@ Detail ekspor dijelaskan pada Bagian 8.
 
 ## 6.1 Tanggung jawab Unloading Master
 
-Unloading Master menangani shipment setelah perjalanan dimulai: menerima kapal, melihat data loading, memverifikasi setiap segel, mengunggah bukti verifikasi, melengkapi tanda tangan bila perlu, memvalidasi kesiapan finalisasi, dan menyelesaikan shipment.
+Unloading Master menangani shipment setelah perjalanan dimulai: menerima kapal, melihat data loading, memverifikasi setiap segel, mengunggah bukti verifikasi, melengkapi tanda tangan bila perlu, memvalidasi kesiapan finalisasi, dan menyelesaikan shipment. Unloading Master tidak dapat memilih atau mengubah discharge Plant–Jetty; destination ditentukan pada fase loading.
 
 Unloading Master hanya dapat mengakses shipment dengan `unloadingMasterId` yang sama dengan ID user tersebut.
 
@@ -1570,7 +1608,17 @@ UM hanya dapat mengelola attachment verification pada shipment assignment bersta
 
 ## 6.9 Langkah 7 — Tanda tangan
 
-Unloading Master dapat menggunakan endpoint tanda tangan yang sama dengan Loading Master sebelum shipment `FINISH`:
+Untuk BA baru, Unloading Master menggunakan endpoint phase `UNLOADING` ketika shipment sudah `SANDAR`:
+
+```text
+GET  /api/v1/shipments/<SHIPMENT_ID>/ba/unloading/signatures
+PUT  /api/v1/shipments/<SHIPMENT_ID>/ba/unloading/signatures/CHIEF_OFFICER
+PUT  /api/v1/shipments/<SHIPMENT_ID>/ba/unloading/signatures/SURVEYOR
+PUT  /api/v1/shipments/<SHIPMENT_ID>/ba/unloading/signatures/TERMINAL_REPRESENTATIVE
+POST /api/v1/shipments/<SHIPMENT_ID>/ba/unloading/finalize
+```
+
+Assigned Unloading Master, Supervisor, atau Admin dapat mengelolanya. Finalisasi BA UNLOADING memerlukan BA LOADING final, seluruh segel aktif pada snapshot LOADING sudah diverifikasi, dan ketiga role UNLOADING lengkap. Snapshot final memisahkan `loadingAttachments` dari snapshot lama dan `unloadingAttachments` milik verification. Setelah final, verification, foto verification, serta signature UNLOADING terkunci. Endpoint lama berikut tetap tersedia khusus data/consumer legacy:
 
 ```text
 GET  /api/v1/shipments/<SHIPMENT_ID>/signatures
@@ -1619,10 +1667,22 @@ Finalisasi memerlukan:
 - snapshot Form A–H valid;
 - seluruh titik required selesai atau `NOT_APPLICABLE`;
 - seluruh segel aktif mempunyai verification.
+- BA UNLOADING sudah berstatus `FINALIZED`.
 
-Attachment dan tanda tangan belum menjadi syarat wajib finalisasi.
+Foto verification tetap opsional. Tiga signature UNLOADING wajib ketika BA UNLOADING difinalisasi. Jika BA tersebut belum final, validasi lifecycle mengembalikan `UNLOADING_BA_NOT_FINALIZED`.
 
 ## 6.11 Langkah 9 — Finalisasi shipment
+
+Bekukan BA UNLOADING terlebih dahulu:
+
+```bash
+curl -X POST http://localhost:5001/api/v1/shipments/<SHIPMENT_ID>/ba/unloading/finalize \
+  -H "Authorization: Bearer <UNLOADING_MASTER_TOKEN>" \
+  -H "Content-Type: application/json" \
+  -d '{}'
+```
+
+Shipment tetap `SANDAR` setelah BA UNLOADING final. Setelah itu jalankan transition lifecycle berikut.
 
 Endpoint yang disarankan:
 
@@ -1642,7 +1702,7 @@ Jika berhasil:
 
 - `status` menjadi `FINISH`;
 - `sealingProcessStatus` menjadi `FINALIZED`;
-- backend membuat `finalSnapshot`;
+- backend menggunakan snapshot BA UNLOADING immutable sebagai `finalSnapshot`, tanpa memotret ulang data live;
 - data shipment, form, segel, verification, attachment, dan signature terkunci;
 - tidak ada endpoint reopen/revision.
 
@@ -1862,12 +1922,14 @@ POST /api/v1/shipments/<SHIPMENT_ID>/pdf
 
 Generate pertama menghasilkan HTTP `201`. Jika PDF yang sama sudah tersedia, backend mengembalikan HTTP `200` dan `reused=true`.
 
+Untuk shipment phase-aware, endpoint ini adalah facade kompatibilitas ke PDF BA UNLOADING dan hanya dapat digunakan assigned Unloading Master, Supervisor, atau Admin. Report historis tanpa `BeritaAcaraDocument` tetap memakai `PdfArtifact` legacy.
+
 ```text
 GET /api/v1/shipments/<SHIPMENT_ID>/pdf/preview
 GET /api/v1/shipments/<SHIPMENT_ID>/pdf/download
 ```
 
-### 8.4 XLSX final
+### 8.4 XLSX operasional/legacy
 
 Generate hanya setelah `FINISH`:
 
@@ -1878,6 +1940,8 @@ GET  /api/v1/shipments/<SHIPMENT_ID>/xlsx/download
 ```
 
 Role yang dapat generate: Admin, Supervisor, LM assignee, dan UM assignee. Viewer hanya preview/download artefak yang sudah ada.
+
+Response generate memuat `documentClassification=OPERATIONAL_LEGACY_EXPORT`. XLSX bukan BA resmi dan tidak mempunyai artefak per phase.
 
 ---
 

@@ -8,6 +8,7 @@ import type {
   UpdateTerminalInput,
 } from "../schemas/terminal.schema.js";
 import { AppError } from "../utils/app-error.js";
+import { resolvePagination } from "../utils/pagination.js";
 
 const asJson = (value: unknown) => JSON.parse(JSON.stringify(value)) as Prisma.InputJsonValue;
 const terminalAudit = (actorId: string, action: AuditAction, entityId: string, oldData?: unknown, newData?: unknown) => prisma.auditLog.create({
@@ -42,23 +43,18 @@ export async function listTerminals(query: ListTerminalsQuery) {
       : {}),
   };
 
-  const skip = (query.page - 1) * query.limit;
+  const total = await prisma.terminal.count({ where });
+  const pagination = resolvePagination(query.page, query.limit, total);
   const items = await prisma.terminal.findMany({
     where,
-    orderBy: terminalOrderBy(query.sortBy, query.sortOrder),
-    skip,
-    take: query.limit,
+    orderBy: [terminalOrderBy(query.sortBy, query.sortOrder), { id: "asc" }],
+    skip: pagination.skip,
+    take: pagination.take,
   });
-  const total = await prisma.terminal.count({ where });
 
   return {
     items,
-    pagination: {
-      page: query.page,
-      limit: query.limit,
-      total,
-      totalPages: Math.ceil(total / query.limit),
-    },
+    pagination: pagination.meta,
   };
 }
 

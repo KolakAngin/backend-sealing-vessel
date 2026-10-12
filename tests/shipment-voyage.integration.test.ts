@@ -113,6 +113,33 @@ test("Shipment/voyage wajib, relasi Plant-Jetty, status terpisah, dan audit", as
       sealingStatus: "READY",
     };
 
+    const { dischargePlantId: omittedDischargePlantId, dischargeJettyId: omittedDischargeJettyId, ...payloadWithoutDestination } = payload;
+    assert.ok(omittedDischargePlantId);
+    assert.ok(omittedDischargeJettyId);
+    const withoutDestination = await call<{ id: string; dischargePlantId: null; dischargeJettyId: null }>(
+      "/shipments",
+      json("POST", {
+        ...payloadWithoutDestination,
+        voyageNumber: `VOY-${suffix}-NO-DEST`,
+        shipmentNumber: `SHP-${suffix}-NO-DEST`,
+      }),
+    );
+    assert.equal(withoutDestination.response.status, 201, JSON.stringify(withoutDestination.body));
+    assert.equal(withoutDestination.body.data.dischargePlantId, null);
+    assert.equal(withoutDestination.body.data.dischargeJettyId, null);
+    reportIds.push(withoutDestination.body.data.id);
+
+    const incompleteDestination = await call<unknown>(
+      "/shipments",
+      json("POST", {
+        ...payloadWithoutDestination,
+        voyageNumber: `VOY-${suffix}-ONE-DEST`,
+        shipmentNumber: `SHP-${suffix}-ONE-DEST`,
+        dischargePlantId,
+      }),
+    );
+    assert.equal(incompleteDestination.response.status, 400);
+
     const wrongJettyPlant = await call<unknown>(
       "/shipments",
       json("POST", { ...payload, shipmentNumber: `SHP-${suffix}-BAD-PAIR`, loadingJettyId: dischargeJettyId }),
@@ -176,6 +203,12 @@ test("Shipment/voyage wajib, relasi Plant-Jetty, status terpisah, dan audit", as
     assert.equal(patched.response.status, 200);
     assert.equal(patched.body.data.status, "DRAFT");
     assert.equal(patched.body.data.sealingStatus, "SEALED");
+    const legacyMutationAgainstCanonical = await call<unknown>(
+      `/reports/${created.body.data.id}`,
+      json("PATCH", { remarks: "Tidak boleh lewat payload Terminal legacy" }),
+    );
+    assert.equal(legacyMutationAgainstCanonical.response.status, 400);
+    assert.match(legacyMutationAgainstCanonical.body.message, /endpoint \/shipments atau \/voyages/i);
 
     const listed = await call<Array<{ id: string }>>(
       `/shipments?shipmentNumber=${payload.shipmentNumber.toLowerCase()}`,
@@ -265,6 +298,12 @@ test("Shipment/voyage wajib, relasi Plant-Jetty, status terpisah, dan audit", as
     assert.equal(legacy.response.status, 201, JSON.stringify(legacy.body));
     assert.equal(legacy.body.data.shipmentNumber, null);
     reportIds.push(legacy.body.data.id);
+    const legacyDestinationAssignment = await call<unknown>(
+      `/reports/${legacy.body.data.id}/destination-assignment`,
+      json("PUT", { dischargePlantId, dischargeJettyId }),
+    );
+    assert.equal(legacyDestinationAssignment.response.status, 400);
+    assert.match(legacyDestinationAssignment.body.message, /canonical/);
   } finally {
     await prisma.auditLog.deleteMany({ where: { userId: { in: [admin.user.id, operator.user.id] } } });
     await prisma.sealingReport.deleteMany({ where: { id: { in: reportIds } } });

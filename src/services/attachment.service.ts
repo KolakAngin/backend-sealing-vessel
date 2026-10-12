@@ -1,10 +1,9 @@
 import { randomUUID } from "node:crypto";
-import { stat } from "node:fs/promises";
 
 import { prisma } from "../config/prisma.js";
 import type { AttachmentOwnerType, AttachmentType, Prisma, ReportStatus, UserRole } from "../generated/prisma/client.js";
 import type { AttachmentInput, UpdateAttachmentInput } from "../schemas/attachment.schema.js";
-import { resolveFile, saveFileWithRollback, stageFileRemoval } from "../storage/local-storage.js";
+import { resolveVerifiedFile, saveFileWithRollback, stageFileRemoval } from "../storage/local-storage.js";
 import { AppError } from "../utils/app-error.js";
 import { extensionForMimeType, sanitizeUploadedFileName, validateDocumentationFile } from "../utils/uploaded-file.js";
 
@@ -23,6 +22,7 @@ type ReportAccess = {
   unloadingMasterId: string | null;
   status: ReportStatus;
   formConfigurationSnapshot: unknown;
+  baDocuments: Array<{ phase: "LOADING" | "UNLOADING"; status: "DRAFT" | "FINALIZED" }>;
 };
 
 type PointContext = {
@@ -55,6 +55,7 @@ const reportSelect = {
   unloadingMasterId: true,
   status: true,
   formConfigurationSnapshot: true,
+  baDocuments: { select: { phase: true, status: true } },
 } satisfies Prisma.SealingReportSelect;
 
 function canManage(actor: AttachmentActor) {
@@ -79,6 +80,9 @@ function assertReportReadable(report: ReportAccess, actor: AttachmentActor) {
 function assertOwnerWritable(report: ReportAccess, ownerType: AttachmentOwnerType, actor: AttachmentActor) {
   if (report.status === "FINISH") throw new AppError(400, "Dokumentasi laporan FINISH telah dikunci");
   if (ownerType === "VERIFICATION") {
+    if (report.baDocuments.some((document) => document.phase === "UNLOADING" && document.status === "FINALIZED")) {
+      throw new AppError(400, "Dokumentasi verification telah dikunci setelah BA UNLOADING difinalisasi");
+    }
     if (report.status !== "SANDAR") throw new AppError(400, "Dokumentasi verification hanya dapat diubah ketika kapal SANDAR");
     if (!canManage(actor) && actor.role !== "UNLOADING_MASTER") {
       throw new AppError(403, "Hanya Unloading Master, Supervisor, atau Admin yang dapat mengubah dokumentasi verification");
@@ -89,6 +93,9 @@ function assertOwnerWritable(report: ReportAccess, ownerType: AttachmentOwnerTyp
     return;
   }
 
+  if (report.baDocuments.some((document) => document.phase === "LOADING" && document.status === "FINALIZED")) {
+    throw new AppError(400, "Dokumentasi loading telah dikunci setelah BA LOADING difinalisasi");
+  }
   if (report.status !== "DRAFT") throw new AppError(400, "Dokumentasi report, section, dan sealing record hanya dapat diubah saat DRAFT");
   if (!canManage(actor) && actor.role !== "LOADING_MASTER") {
     throw new AppError(403, "Hanya Loading Master, Supervisor, atau Admin yang dapat mengubah dokumentasi loading");
@@ -365,12 +372,10 @@ export async function getAttachment(id: string, actor: AttachmentActor) {
 
 export async function getAttachmentFile(id: string, actor: AttachmentActor) {
   const attachment = await getAttachment(id, actor);
-  const absolutePath = resolveFile(attachmentStorageKey(attachment.id, attachment.mimeType));
-  try {
-    await stat(absolutePath);
-  } catch {
-    throw new AppError(404, "File lampiran tidak ditemukan di penyimpanan");
-  }
+  const absolutePath = await resolveVerifiedFile(attachmentStorageKey(attachment.id, attachment.mimeType), {
+    fileSize: attachment.fileSize,
+    checksumSha256: attachment.checksumSha256,
+  });
   return { attachment, absolutePath };
 }
 
@@ -409,7 +414,7 @@ export async function deleteAttachment(id: string, actor: AttachmentActor) {
   assertOwnerWritable(report, attachment.ownerType, actor);
   if (attachment.uploadedById !== actor.id && !canManage(actor)) throw new AppError(403, "Hanya pengunggah, Supervisor, atau Admin yang dapat menghapus lampiran");
 
-  const staged = await stageFileRemoval(attachmentStorageKey(attachment.id, attachment.mimeType));
+  let staged: Awaited<ReturnType<typeof stageFileRemoval>> | null = null;
   try {
     const oldData = {
       ...attachment,
@@ -423,14 +428,23 @@ export async function deleteAttachment(id: string, actor: AttachmentActor) {
       const current = await tx.attachment.findUnique({ where: { id }, select: { uploadedById: true } });
       if (!current) throw new AppError(404, "Lampiran tidak ditemukan");
       if (current.uploadedById !== actor.id && !canManage(actor)) throw new AppError(403, "Hanya pengunggah, Supervisor, atau Admin yang dapat menghapus lampiran");
-      const removed = await tx.attachment.delete({ where: { id } });
-      await tx.auditLog.create({ data: { userId: actor.id, action: "DELETE", entityType: "ATTACHMENT", entityId: id, oldData } });
-      return removed;
+      staged = await stageFileRemoval(attachmentStorageKey(attachment.id, attachment.mimeType));
+      try {
+        const removed = await tx.attachment.delete({ where: { id } });
+        await tx.auditLog.create({ data: { userId: actor.id, action: "DELETE", entityType: "ATTACHMENT", entityId: id, oldData } });
+        return removed;
+      } catch (error) {
+        await staged.rollback();
+        staged = null;
+        throw error;
+      }
     });
-    await staged.commit();
+    const committedStage = staged as Awaited<ReturnType<typeof stageFileRemoval>> | null;
+    if (committedStage) await committedStage.commit();
     return deleted;
   } catch (error) {
-    await staged.rollback();
+    const failedStage = staged as Awaited<ReturnType<typeof stageFileRemoval>> | null;
+    if (failedStage) await failedStage.rollback();
     throw error;
   }
 }

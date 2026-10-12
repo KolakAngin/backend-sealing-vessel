@@ -13,6 +13,7 @@ import { AppError } from "../utils/app-error.js";
 import { createAccessToken } from "../utils/jwt.js";
 import { hashPassword, verifyPassword } from "../utils/password.js";
 import { env } from "../config/env.js";
+import { resolvePagination } from "../utils/pagination.js";
 
 const publicUserSelect = {
   id: true,
@@ -77,15 +78,16 @@ export async function listUsers(query: ListUsersInput) {
       { email: { contains: query.search, mode: "insensitive" } },
     ] } : {}),
   };
+  const total = await prisma.user.count({ where });
+  const pagination = resolvePagination(query.page, query.limit, total);
   const items = await prisma.user.findMany({
     where,
     select: publicUserSelect,
-    skip: (query.page - 1) * query.limit,
-    take: query.limit,
-    orderBy: { [query.sortBy]: query.sortOrder },
+    skip: pagination.skip,
+    take: pagination.take,
+    orderBy: [{ [query.sortBy]: query.sortOrder }, { id: "asc" }],
   });
-  const total = await prisma.user.count({ where });
-  return { items, pagination: { page: query.page, limit: query.limit, total, totalPages: Math.ceil(total / query.limit) } };
+  return { items, pagination: pagination.meta };
 }
 
 export async function listAssignableUsers(query: AssignableUsersInput) {
@@ -97,17 +99,16 @@ export async function listAssignableUsers(query: AssignableUsersInput) {
       { fullName: { contains: query.search, mode: "insensitive" } },
     ] } : {}),
   };
-  const [items, total] = await prisma.$transaction([
-    prisma.user.findMany({
-      where,
-      select: { id: true, username: true, fullName: true, role: true },
-      skip: (query.page - 1) * query.limit,
-      take: query.limit,
-      orderBy: [{ fullName: "asc" }, { id: "asc" }],
-    }),
-    prisma.user.count({ where }),
-  ]);
-  return { items, pagination: { page: query.page, limit: query.limit, total, totalPages: Math.ceil(total / query.limit) } };
+  const total = await prisma.user.count({ where });
+  const pagination = resolvePagination(query.page, query.limit, total);
+  const items = await prisma.user.findMany({
+    where,
+    select: { id: true, username: true, fullName: true, role: true },
+    skip: pagination.skip,
+    take: pagination.take,
+    orderBy: [{ fullName: "asc" }, { id: "asc" }],
+  });
+  return { items, pagination: pagination.meta };
 }
 
 export async function getUser(id: string) {

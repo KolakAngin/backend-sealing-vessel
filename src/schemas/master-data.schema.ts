@@ -15,6 +15,7 @@ const pagingQuery = z.object({
   isActive: optionalBooleanQuery,
   sortOrder: z.enum(["asc", "desc"]).default("asc"),
 });
+const nestedMasterLimit = z.coerce.number().int().positive().max(100).default(100);
 const idParams = z.object({ id: uuid });
 const emptyQuery = z.object({});
 const detailRequest = z.object({ body: z.unknown(), params: idParams, query: emptyQuery });
@@ -230,12 +231,12 @@ export const vesselPointDetailRequest = detailRequest;
 export const listVesselCompartmentsRequest = z.object({
   body: z.unknown(),
   params: z.object({ vesselId: uuid }),
-  query: listCompartmentsQuery.omit({ vesselId: true }),
+  query: listCompartmentsQuery.omit({ vesselId: true, limit: true }).extend({ limit: nestedMasterLimit }),
 });
 export const listVesselSealingPointsRequest = z.object({
   body: z.unknown(),
   params: z.object({ vesselId: uuid }),
-  query: listVesselPointsQuery.omit({ vesselId: true }),
+  query: listVesselPointsQuery.omit({ vesselId: true, limit: true }).extend({ limit: nestedMasterLimit }),
 });
 export const listCategoryTemplatesRequest = z.object({
   body: z.unknown(),

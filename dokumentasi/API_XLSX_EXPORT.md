@@ -1,4 +1,6 @@
-# API Generator XLSX Resmi
+# API Export XLSX Operasional/Legacy
+
+XLSX bukan Berita Acara resmi dan bukan artefak phase-aware. Workbook ini adalah export operasional form segel TKO untuk kebutuhan spreadsheet/integrasi lama. Dokumen resmi shipment baru tetap PDF BA LOADING dan PDF BA UNLOADING. Karena itu backend tidak menambah model XLSX per phase maupun endpoint `/ba/:phase/xlsx`.
 
 ## 1. Sumber dan prinsip
 
@@ -22,13 +24,14 @@ Semua endpoint memerlukan Bearer token dan tersedia dengan prefix ekuivalen `/re
 
 Role: `ADMIN`, `SUPERVISOR`, `LOADING_MASTER`, atau `UNLOADING_MASTER`, dengan pemeriksaan assignment yang sama seperti pembacaan laporan. Hanya laporan `FINISH` dengan `finalSnapshot` versi 1 yang diterima.
 
-Response HTTP 201:
+Response HTTP 201 (field klasifikasi bersifat eksplisit):
 
 ```json
 {
   "success": true,
   "data": {
     "reportId": "uuid",
+    "documentClassification": "OPERATIONAL_LEGACY_EXPORT",
     "fileName": "SHP-001-uuid.xlsx",
     "mimeType": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     "fileSize": 123456,
@@ -41,12 +44,16 @@ Response HTTP 201:
 }
 ```
 
-Setiap generate membuat audit log `CREATE` dengan `entityType=XLSX_EXPORT`. Artefak disimpan atomik pada `XLSX_EXPORT_DIR` (default `exports/xlsx`). Generate ulang laporan final yang sama mengganti artefak deterministiknya dan membuat audit baru.
+Setiap generate membuat audit log `CREATE` dengan `entityType=XLSX_EXPORT` dan `classification=OPERATIONAL_LEGACY_EXPORT`. Nama `XLSX_EXPORT` dipertahankan demi kompatibilitas audit lama. File disimpan atomik pada `XLSX_EXPORT_DIR` (default `exports/xlsx`). Generate ulang laporan final yang sama mengganti file deterministiknya dan membuat audit baru.
+
+Untuk shipment phase-aware, `finalSnapshot` pada saat `FINISH` adalah salinan persis snapshot BA UNLOADING. Export memilih tiga `loadingSignatures` untuk mempertahankan bentuk form segel tiga slot; file signature dibaca dengan storage key phase-aware. Enam signature BA dan appendix foto tetap hanya menjadi bagian dokumen PDF BA UNLOADING. Untuk laporan historis tanpa dokumen phase-aware, struktur `finalSnapshot` dan signature legacy tetap didukung.
 
 ### Preview dan download
 
 - `GET /api/v1/shipments/:reportId/xlsx/preview` mengembalikan file dengan `Content-Disposition: inline`.
 - `GET /api/v1/shipments/:reportId/xlsx/download` mengembalikan file dengan `Content-Disposition: attachment`.
+
+Preview dan download membandingkan byte tersimpan dengan `fileSize` dan SHA-256 yang dicatat pada audit `XLSX_EXPORT` saat generate, menolak perbedaan dengan HTTP 409, dan mengirim header `X-Checksum-SHA256`.
 
 Keduanya memakai `Cache-Control: private, no-store` dan `X-Content-Type-Options: nosniff`, serta mengembalikan HTTP 404 bila endpoint generate belum dipanggil.
 

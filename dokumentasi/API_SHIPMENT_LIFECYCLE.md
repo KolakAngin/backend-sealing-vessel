@@ -10,6 +10,8 @@ Tiga jenis status tidak dicampur:
 - `sealingProcessStatus`: status proses internal yang dikelola server, yaitu `NOT_STARTED`, `IN_PROGRESS`, `READY`, `IN_TRANSIT`, `VERIFICATION`, dan `FINALIZED`;
 - `sealingStatus`: nilai Status Sealing dari sumber/workbook. Kolom string lama tetap dipertahankan karena domain sumber belum ditentukan dan tidak boleh ditebak.
 
+Urutan bisnis canonical lengkap adalah `DRAFT → BA LOADING FINALIZED → BERLAYAR → SANDAR → BA UNLOADING FINALIZED → FINISH`. Finalisasi BA tidak mengubah `status` perjalanan: BA LOADING final tetap `DRAFT`, sedangkan BA UNLOADING final tetap `SANDAR` sampai endpoint lifecycle berikutnya dipanggil.
+
 `sealingProcessStatus` bergerak sebagai berikut:
 
 ```text
@@ -28,6 +30,7 @@ Semua endpoint tersedia pada prefix `shipments`, `voyages`, dan `reports`:
 | Method | Path canonical | Keterangan |
 |---|---|---|
 | `GET` | `/api/v1/shipments/:id/validation` | Menghitung kesiapan depart, arrive, dan finalize beserta seluruh error. |
+| `PUT` | `/api/v1/shipments/:id/destination-assignment` | Memilih discharge Plant–Jetty setelah sealing `READY`, sebelum depart. |
 | `POST` | `/api/v1/shipments/:id/depart` | `DRAFT → BERLAYAR`. |
 | `POST` | `/api/v1/shipments/:id/arrive` | `BERLAYAR → SANDAR`. |
 | `POST` | `/api/v1/shipments/:id/finalize` | `SANDAR → FINISH` dan membentuk final snapshot. |
@@ -53,6 +56,7 @@ Keduanya opsional. Bila `occurredAt` tidak dikirim, server memakai waktu transak
 - Loading Master harus aktif dan mempunyai role `LOADING_MASTER` atau `SUPERVISOR`.
 - `unloadingMasterId` dapat belum ditentukan selama penyusunan draft, tetapi wajib aktif dan ber-role `UNLOADING_MASTER` atau `SUPERVISOR` sebelum depart.
 - Hanya Loading Master yang ditugaskan, Admin, atau Supervisor yang dapat menyiapkan form dan melakukan depart.
+- Hanya Loading Master yang ditugaskan, Admin, atau Supervisor yang dapat memilih destination; Unloading Master tidak dapat memilih atau mengubahnya.
 - Hanya Unloading Master yang ditugaskan, Admin, atau Supervisor yang dapat melakukan arrive, verification, dan finalize.
 
 `createdById` tetap menyimpan pembuat/audit owner dan tidak diganti oleh assignment.
@@ -62,7 +66,7 @@ Keduanya opsional. Bila `occurredAt` tidak dikirim, server memakai waktu transak
 Untuk shipment canonical:
 
 1. status perjalanan harus `DRAFT`;
-2. seluruh field wajib shipment harus lengkap;
+2. seluruh field inti shipment dan pasangan destination harus lengkap;
 3. Vessel, Activity, Product, Plant, dan Jetty harus aktif;
 4. Activity hanya `LOADING`, `DISCHARGE`, atau `ROB`;
 5. pasangan Loading Plant–Jetty dan Discharge Plant–Jetty harus masih valid;
@@ -70,8 +74,11 @@ Untuk shipment canonical:
 7. snapshot A–H harus tersedia, valid, dan berasal dari vessel shipment;
 8. hanya point snapshot dengan `isRequired=true` yang wajib selesai;
 9. point required boleh `NOT_APPLICABLE`; selain itu harus `SEALED` dan mempunyai minimal satu nomor segel aktif.
+10. BA `LOADING` harus sudah berstatus `FINALIZED`.
 
-Point `isRequired=false`, section tidak tersedia, dan point `NOT_APPLICABLE` tidak menghalangi keberangkatan. Dokumentasi, attachment, dan signature tidak diperiksa karena sumber belum menyatakannya wajib.
+Point `isRequired=false`, section tidak tersedia, dan point `NOT_APPLICABLE` tidak menghalangi keberangkatan. Tiga signature LOADING diperiksa ketika BA LOADING difinalisasi; departure hanya memeriksa hasil finalisasi immutable tersebut.
+
+Destination boleh kosong saat create. Assignment yang ditunda baru dibuka ketika `sealingProcessStatus = READY`, hanya selama status perjalanan masih `DRAFT`. Departure ditolak dengan `DESTINATION_ASSIGNMENT_REQUIRED` bila pasangan belum lengkap, ditolak bila pasangan tidak aktif/tidak terdaftar, dan ditolak dengan `LOADING_BA_NOT_FINALIZED` bila BA LOADING belum final. Destination langsung terkunci ketika BA LOADING final, sebelum depart.
 
 Nilai `isRequired` disimpan pada `VesselSealingPoint` dan ikut dibekukan pada snapshot. Snapshot lama yang belum mempunyai atribut tersebut diperlakukan required untuk mempertahankan aturan historis yang lebih ketat.
 
@@ -88,8 +95,9 @@ Finalisasi memerlukan:
 - snapshot canonical tetap valid;
 - point required telah selesai atau `NOT_APPLICABLE`;
 - setiap nomor segel aktif pada point yang bukan `NOT_APPLICABLE` telah mempunyai verification.
+- BA `UNLOADING` telah difinalisasi; bila belum, validasi mengembalikan `UNLOADING_BA_NOT_FINALIZED`.
 
-Nomor berstatus `REMOVED` atau `REPLACED` tidak dianggap seal aktif. Point/section `NOT_APPLICABLE` tidak menghalangi finalisasi. Tidak ada kewajiban attachment atau dokumen.
+Nomor berstatus `REMOVED` atau `REPLACED` tidak dianggap seal aktif. Point/section `NOT_APPLICABLE` tidak menghalangi finalisasi. Foto verification bersifat opsional, tetapi seluruh foto yang tersedia dibekukan ke snapshot BA UNLOADING.
 
 ## Response validasi
 
@@ -105,19 +113,20 @@ Endpoint validasi bersifat read-only dan tidak menjalankan transisi.
 
 ## Final snapshot dan penguncian
 
-Finalisasi menyimpan `SealingReport.finalSnapshot` JSON yang berisi:
+Untuk shipment canonical, finalisasi lifecycle menggunakan snapshot BA UNLOADING yang sudah immutable sebagai `SealingReport.finalSnapshot`; data live tidak dipotret ulang. Snapshot tersebut berisi:
 
 - header shipment, activity, vessel, product, Plant/Jetty, assignment, dan waktu lifecycle;
 - snapshot konfigurasi A–H;
 - seluruh sealing record, point snapshot, status, catatan;
 - seluruh nomor segel dan verification;
-- metadata attachment report/section/record/verification serta tiga slot signature, termasuk checksum dan ukuran file;
+- `loadingAttachments` dari snapshot BA LOADING dan `unloadingAttachments` dari verification, lengkap dengan provenance dan checksum;
+- tiga signature LOADING dan tiga signature UNLOADING;
 - waktu dan user finalisasi.
 
-Setelah `FINISH`, update shipment/report, input form, perubahan nomor segel, verification, dan finalisasi ulang ditolak oleh aturan status service. Final snapshot tidak ditulis ulang.
+Verification, attachment verification, dan signature UNLOADING sudah terkunci sejak BA UNLOADING final, sebelum status `FINISH`. Setelah `FINISH`, seluruh mutasi lifecycle tetap ditolak. Data historis non-canonical tetap memakai pembentukan finalSnapshot legacy.
 
 ## Revisi
 
 Spesifikasi sumber belum menentukan siapa yang boleh membuka revisi, nomor/versi revisi, alasan, approval, ataupun apakah revisi menyalin final snapshot. Karena itu STEP 7 tidak membuat endpoint reopen/revision dan tidak menebak workflow. Client dapat membaca `revisionSupported=false` dari endpoint validasi.
 
-STEP 7 tidak mengerjakan attachment, generator XLSX/PDF, ataupun frontend.
+Frontend berada di luar ruang lingkup lifecycle backend ini. Attachment dan PDF resmi mengikuti phase BA serta snapshot immutable; XLSX tetap export operasional/legacy sebagaimana dijelaskan pada dokumentasi export.
