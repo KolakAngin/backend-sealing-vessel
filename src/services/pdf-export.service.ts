@@ -72,6 +72,7 @@ export type PdfFinalSnapshot = {
     activity: { code: string; name: string } | null;
     vessel: { id: string; name: string; imoNumber: string | null };
     product: { name: string } | null;
+    products?: Array<{ id?: string; name: string }>;
     loadingPlant: { code: string; name: string } | null;
     loadingJetty: { name: string } | null;
     dischargePlant: { code: string; name: string } | null;
@@ -325,6 +326,9 @@ const SECTION_A_HEADERS = [
 
 function renderNativeHeader(page: PDFPage, font: PDFFont, bold: PDFFont, snapshot: PdfFinalSnapshot, set: number, setCount: number) {
   const report = snapshot.report;
+  const productNames = report.products?.length
+    ? report.products.map((product) => product.name).join(", ")
+    : (report.product?.name ?? "-");
   const master = documentMasterContext(snapshot);
   const baseTitle = snapshot.phase ? `BERITA ACARA ${snapshot.phase}` : "SEALING REPORT";
   const title = setCount > 1 ? `${baseTitle} — CONTINUATION ${set}/${setCount}` : baseTitle;
@@ -332,7 +336,7 @@ function renderNativeHeader(page: PDFPage, font: PDFFont, bold: PDFFont, snapsho
   page.drawText(title, { x: (A4.width - bold.widthOfTextAtSize(title, titleSize)) / 2, y: 758, size: titleSize, font: bold, color: COLOR.ink });
 
   const labels = ["Vessel Name", "Terminal", "Cargo", "Date / Time"];
-  const values = [report.vessel.name, master.port, report.product?.name ?? "-", new Date(report.reportDateTime).toLocaleString("id-ID", { timeZone: "Asia/Jakarta", hour12: false })];
+  const values = [report.vessel.name, master.port, productNames, new Date(report.reportDateTime).toLocaleString("id-ID", { timeZone: "Asia/Jakarta", hour12: false })];
   const metadataTop = 744;
   const rowHeight = 18;
   labels.forEach((label, index) => {
@@ -362,7 +366,7 @@ function renderNativeHeader(page: PDFPage, font: PDFFont, bold: PDFFont, snapsho
     { text: ", for and on behalf of PT Pertamina Patra Niaga, conduct ", font },
     { text: report.activity?.code ?? "-", font: bold },
     { text: " inspection and supervision of ", font },
-    { text: report.product?.name ?? "cargo", font: bold },
+    { text: productNames === "-" ? "cargo" : productNames, font: bold },
     { text: ". Upon completion, sealing was conducted on board the vessel as follows:", font },
   ], 36, 661, 523, 8.2, 10.5);
 }

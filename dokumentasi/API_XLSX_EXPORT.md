@@ -64,7 +64,7 @@ Keduanya memakai `Cache-Control: private, no-store` dan `X-Content-Type-Options:
 | Voyage, Shipment Number, Sealing Status | `C2` pada area header kosong resmi |
 | Vessel | `U9`; cached value formula narasi `C20` dan `BN22` diperbarui tanpa menghapus formula |
 | Loading Plant/Jetty dan Discharge Plant/Jetty | `U11`, masing-masing diberi label Loading/Discharge |
-| Product | `U13` |
+| Seluruh Product shipment | `U13`, digabung dengan pemisah koma sesuai urutan `productIds` snapshot |
 | Tanggal/waktu | `U15`, format `id-ID` zona waktu `Asia/Jakarta` |
 | Activity | `Y22` |
 | Lokasi narasi `at the port of` | `AQ20`: discharge untuk `DISCHARGE`, loading untuk `LOADING` dan `ROB` |

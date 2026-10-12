@@ -4,6 +4,10 @@ const uuid = z.uuid("ID harus berupa UUID yang valid");
 const nullableText = (max: number) => z.string().trim().max(max).nullable().optional().transform((v) => v === "" ? null : v);
 const paging = z.object({ page: z.coerce.number().int().positive().default(1), limit: z.coerce.number().int().positive().max(100).default(10) });
 const detail = z.object({ body: z.unknown(), params: z.object({ id: uuid }), query: z.object({}) });
+const productIds = z.array(uuid)
+  .min(1, "Minimal satu productId wajib dikirim")
+  .max(100, "Maksimal 100 produk dalam satu shipment")
+  .refine((items) => new Set(items).size === items.length, "Product yang sama tidak boleh dikirim lebih dari satu kali");
 
 export const createReportBody = z.object({
   reportNo: z.string().trim().min(1).max(50), vesselId: uuid,
@@ -19,7 +23,9 @@ const shipmentBaseBody = z.object({
   reportDateTime: z.coerce.date(),
   voyageNumber: z.string().trim().min(1).max(50),
   shipmentNumber: z.string().trim().min(1).max(50),
-  productId: uuid,
+  productIds: productIds.optional(),
+  // Alias lama tetap diterima sebagai satu produk selama masa kompatibilitas.
+  productId: uuid.optional(),
   loadingPlantId: uuid,
   loadingJettyId: uuid,
   dischargePlantId: uuid.optional(),
@@ -30,6 +36,23 @@ const shipmentBaseBody = z.object({
   loadingMasterSurveyorName: nullableText(150),
   remarks: nullableText(2_000),
 }).strict();
+
+function validateProducts(
+  value: { productIds?: string[] | undefined; productId?: string | undefined },
+  context: z.RefinementCtx,
+  required: boolean,
+) {
+  if (required && value.productIds === undefined && value.productId === undefined) {
+    context.addIssue({ code: "custom", path: ["productIds"], message: "Minimal satu produk wajib dikirim" });
+  }
+  if (value.productIds && value.productId && value.productIds[0] !== value.productId) {
+    context.addIssue({
+      code: "custom",
+      path: ["productId"],
+      message: "productId kompatibilitas harus sama dengan produk pertama pada productIds",
+    });
+  }
+}
 
 function validateDestinationPair(
   value: { dischargePlantId?: string | undefined; dischargeJettyId?: string | undefined },
@@ -46,9 +69,15 @@ function validateDestinationPair(
   }
 }
 
-export const shipmentBody = shipmentBaseBody.superRefine(validateDestinationPair);
+export const shipmentBody = shipmentBaseBody.superRefine((value, context) => {
+  validateDestinationPair(value, context);
+  validateProducts(value, context, true);
+});
 export const updateShipmentBody = shipmentBaseBody.partial()
-  .superRefine(validateDestinationPair)
+  .superRefine((value, context) => {
+    validateDestinationPair(value, context);
+    validateProducts(value, context, false);
+  })
   .refine((v) => Object.keys(v).length > 0, "Minimal satu field harus dikirim");
 export const destinationAssignmentBody = z.object({
   dischargePlantId: uuid,

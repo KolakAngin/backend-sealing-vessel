@@ -23,7 +23,7 @@ Alur API yang diaudit menggunakan prefix `/api/v1`; tabel menuliskan path setela
 | Tanggal | Tanggal voyage/shipment | `reportDateTime` wajib, ISO date-time | `SealingReport.reportDateTime` `Timestamptz(3)` | Parsial: implementasi mewajibkan waktu; sumber hanya menulis Tanggal. |
 | Voyage Number | Nomor voyage | `voyageNumber` wajib | `SealingReport.voyageNumber` varchar nullable hanya untuk histori | Sesuai; tidak dibuat unik karena sumber tidak memerintahkannya. |
 | Shipoment Number | Nomor shipment | `shipmentNumber` wajib | `SealingReport.shipmentNumber` unique; nullable hanya untuk histori | Sesuai; dinormalisasi uppercase dan tidak dipetakan ke `reportNo`. |
-| Produk | Referensi master produk | `productId` wajib dan aktif | `SealingReport.productId` → `Product.id` | Sesuai. UoM tetap di luar shipment karena sumber belum menetapkan relasinya. |
+| Produk | Satu atau lebih referensi master produk | `productIds` wajib, tidak kosong, unik, dan seluruhnya aktif | `SealingReportProduct(sealingReportId, productId, sequence)`; `SealingReport.productId` alias produk pertama | Mendukung multi-produk. UoM tetap di luar shipment karena sumber belum menetapkan relasinya. |
 | Loading Port | Referensi plant loading | `loadingPlantId` wajib dan aktif | `SealingReport.loadingPlantId` → `Plant.id` | Sesuai dengan istilah implementasi Plant; Terminal lama tetap terpisah. |
 | Jetty Name Loading Port | Referensi jetty loading | `loadingJettyId` wajib, aktif, dan harus di-assign ke loading Plant | `SealingReport.loadingJettyId` → `Jetty.id`; validasi melalui `PlantJettyAssignment` | Sesuai setelah assignment aktual dikonfigurasi. |
 | Discharge Port | Referensi plant discharge | `dischargePlantId` wajib dan aktif | `SealingReport.dischargePlantId` → `Plant.id` | Sesuai dengan istilah implementasi Plant; Terminal lama tetap terpisah. |
@@ -46,7 +46,7 @@ Field implementasi tambahan yang tidak muncul pada daftar wajib sumber:
 |---|---|---|---|
 | `Vessel Name` | `vesselId` | relasi `SealingReport.vessel` | Sesuai. |
 | `Terminal` | `originTerminalId`; ada `destinationTerminalId` | dua relasi `Terminal` | Parsial: header tunggal tidak menentukan terminal asal/tujuan mana yang dicetak. |
-| `Cargo` | `productId` pada shipment canonical; `cargo` hanya legacy | `SealingReport.product` dan kolom `cargo` legacy | Sesuai untuk transaksi baru; aturan snapshot nama produk pada output belum diputuskan. |
+| `Cargo` | `productIds` pada shipment canonical; `cargo` hanya legacy | `SealingReport.shipmentProducts`; `product` tunggal dan kolom `cargo` hanya kompatibilitas | Seluruh nama produk dibekukan dalam snapshot dan ditampilkan dipisahkan koma pada dokumen. |
 | `Date/Time` | `reportDateTime` | `Timestamptz(3)` | Sesuai secara teknis; format/timezone output belum diputuskan. |
 | `We Loading Master/Surveyor ...` | `loadingMasterSurveyorName` | field dengan nama sama | Parsial; sumber/role pengisi belum pasti. |
 | `at the port of ...` | `portName` | `SealingReport.portName` | Parsial; tumpang tindih dengan terminal/port master. |

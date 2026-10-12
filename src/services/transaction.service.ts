@@ -38,6 +38,10 @@ const reportInclude = {
   vessel: { select: { id: true, name: true, imoNumber: true, drawingFileUrl: true, drawingLink: true } },
   activity: { select: { id: true, code: true, name: true } },
   product: { select: { id: true, name: true } },
+  shipmentProducts: {
+    select: { product: { select: { id: true, name: true } }, sequence: true },
+    orderBy: { sequence: "asc" as const },
+  },
   loadingPlant: { select: { id: true, code: true, name: true } },
   loadingJetty: { select: { id: true, name: true } },
   dischargePlant: { select: { id: true, code: true, name: true } },
@@ -64,7 +68,6 @@ export async function listReports(query: ListReportsInput, actor: Actor) {
     ...(actor.role === "UNLOADING_MASTER" ? { unloadingMasterId: actor.id } : {}),
     ...(query.vesselId ? { vesselId: query.vesselId } : {}),
     ...(query.activityId ? { activityId: query.activityId } : {}),
-    ...(query.productId ? { productId: query.productId } : {}),
     ...(query.loadingPlantId ? { loadingPlantId: query.loadingPlantId } : {}),
     ...(query.loadingJettyId ? { loadingJettyId: query.loadingJettyId } : {}),
     ...(query.dischargePlantId ? { dischargePlantId: query.dischargePlantId } : {}),
@@ -75,18 +78,25 @@ export async function listReports(query: ListReportsInput, actor: Actor) {
     ...(query.shipmentNumber ? { shipmentNumber: query.shipmentNumber.toUpperCase() } : {}),
     ...(query.sealingStatus ? { sealingStatus: query.sealingStatus } : {}),
     ...(query.status ? { status: query.status } : {}),
-    ...(query.search ? { AND: [{ OR: [
-      { reportNo: { contains: query.search, mode: "insensitive" } },
-      { voyageNumber: { contains: query.search, mode: "insensitive" } },
-      { shipmentNumber: { contains: query.search, mode: "insensitive" } },
-      { cargo: { contains: query.search, mode: "insensitive" } },
-      { portName: { contains: query.search, mode: "insensitive" } },
-    ] }] } : {}),
+    ...((query.productId || query.search) ? { AND: [
+      ...(query.productId ? [{ OR: [
+        { shipmentProducts: { some: { productId: query.productId } } },
+        { productId: query.productId },
+      ] }] : []),
+      ...(query.search ? [{ OR: [
+        { reportNo: { contains: query.search, mode: "insensitive" as const } },
+        { voyageNumber: { contains: query.search, mode: "insensitive" as const } },
+        { shipmentNumber: { contains: query.search, mode: "insensitive" as const } },
+        { cargo: { contains: query.search, mode: "insensitive" as const } },
+        { portName: { contains: query.search, mode: "insensitive" as const } },
+        { shipmentProducts: { some: { product: { name: { contains: query.search, mode: "insensitive" as const } } } } },
+      ] }] : []),
+    ] } : {}),
   };
   const total = await prisma.sealingReport.count({ where });
   const pagination = resolvePagination(query.page, query.limit, total);
   const items = await prisma.sealingReport.findMany({ where, include: reportInclude, skip: pagination.skip, take: pagination.take, orderBy: [{ reportDateTime: query.sortOrder }, { id: "asc" }] });
-  return { items: items.map(withSnapshotDrawing), pagination: pagination.meta };
+  return { items: items.map(withReportCompatibility), pagination: pagination.meta };
 }
 
 export async function getReport(id: string, actor?: Actor) {
@@ -94,7 +104,7 @@ export async function getReport(id: string, actor?: Actor) {
   if (!item) throw new AppError(404, "Laporan sealing tidak ditemukan");
   if (actor?.role === "LOADING_MASTER" && (item.loadingMasterId ?? item.createdById) !== actor.id) throw new AppError(403, "Anda tidak berhak melihat perjalanan ini");
   if (actor?.role === "UNLOADING_MASTER" && item.unloadingMasterId !== actor.id) throw new AppError(403, "Anda tidak berhak menerima perjalanan ini");
-  return withSnapshotDrawing(item);
+  return withReportCompatibility(item);
 }
 
 const supportedActivityCodes = ["LOADING", "DISCHARGE", "ROB"] as const;
@@ -126,7 +136,7 @@ type ShipmentReferenceClient = Pick<
 >;
 type DestinationAssignmentTransactionClient = ShipmentReferenceClient & Pick<
   typeof prisma,
-  "sealingReport" | "beritaAcaraDocument" | "auditLog" | "$queryRawUnsafe"
+  "sealingReport" | "sealingReportProduct" | "beritaAcaraDocument" | "auditLog" | "$queryRawUnsafe"
 >;
 
 async function validateUnloadingMaster(
@@ -146,14 +156,14 @@ async function validateUnloadingMaster(
 async function validateCoreShipmentReferences(input: {
   vesselId: string;
   activityId: string;
-  productId: string;
+  productIds: string[];
   loadingPlantId: string;
   loadingJettyId: string;
 }, database: ShipmentReferenceClient = prisma) {
-  const [vessel, activity, product, loadingPlant, loadingJetty, loadingAssignment] = await Promise.all([
+  const [vessel, activity, products, loadingPlant, loadingJetty, loadingAssignment] = await Promise.all([
     database.vessel.findUnique({ where: { id: input.vesselId }, select: { id: true, isActive: true } }),
     database.activity.findUnique({ where: { id: input.activityId }, select: { id: true, code: true, isActive: true } }),
-    database.product.findUnique({ where: { id: input.productId }, select: { id: true, isActive: true } }),
+    database.product.findMany({ where: { id: { in: input.productIds } }, select: { id: true, isActive: true } }),
     database.plant.findUnique({ where: { id: input.loadingPlantId }, select: { id: true, isActive: true } }),
     database.jetty.findUnique({ where: { id: input.loadingJettyId }, select: { id: true, isActive: true } }),
     database.plantJettyAssignment.findUnique({
@@ -167,7 +177,9 @@ async function validateCoreShipmentReferences(input: {
   if (!supportedActivityCodes.includes(activity.code.toUpperCase() as typeof supportedActivityCodes[number])) {
     throw new AppError(400, "Activity shipment harus LOADING, DISCHARGE, atau ROB");
   }
-  if (!product?.isActive) throw new AppError(400, "Product tidak tersedia atau tidak aktif");
+  const activeProductIds = new Set(products.filter((product: { isActive: boolean }) => product.isActive).map((product: { id: string }) => product.id));
+  const invalidProductIds = input.productIds.filter((id) => !activeProductIds.has(id));
+  if (invalidProductIds.length > 0) throw new AppError(400, "Satu atau lebih Product tidak tersedia atau tidak aktif");
   if (!loadingPlant?.isActive) throw new AppError(400, "Loading plant tidak tersedia atau tidak aktif");
   if (!loadingJetty?.isActive) throw new AppError(400, "Loading jetty tidak tersedia atau tidak aktif");
   if (!loadingAssignment) throw new AppError(400, "Loading jetty tidak terdaftar pada loading plant");
@@ -193,8 +205,9 @@ async function validateDestinationReferences(input: {
 
 export async function createShipment(input: CreateShipmentInput, actor: Actor) {
   const loadingMasterId = await resolveLoadingMasterId(input.loadingMasterId, actor);
+  const productIds = input.productIds ?? (input.productId ? [input.productId] : []);
   await Promise.all([
-    validateCoreShipmentReferences(input),
+    validateCoreShipmentReferences({ ...input, productIds }),
     ...(input.dischargePlantId && input.dischargeJettyId ? [validateDestinationReferences({
       dischargePlantId: input.dischargePlantId,
       dischargeJettyId: input.dischargeJettyId,
@@ -211,7 +224,11 @@ export async function createShipment(input: CreateShipmentInput, actor: Actor) {
     reportDateTime: input.reportDateTime,
     voyageNumber: input.voyageNumber.toUpperCase(),
     shipmentNumber: input.shipmentNumber.toUpperCase(),
-    productId: input.productId,
+    // Alias produk pertama dipertahankan untuk client/data historis lama.
+    productId: productIds[0],
+    shipmentProducts: {
+      create: productIds.map((productId, index) => ({ productId, sequence: index + 1 })),
+    },
     loadingPlantId: input.loadingPlantId,
     loadingJettyId: input.loadingJettyId,
     dischargePlantId: input.dischargePlantId,
@@ -227,14 +244,17 @@ export async function createShipment(input: CreateShipmentInput, actor: Actor) {
     prisma.sealingReport.create({ data, include: reportInclude }),
     audit(actor.id, "CREATE", "SHIPMENT_VOYAGE", id, undefined, data),
   ]);
-  return created;
+  return withReportCompatibility(created);
 }
 
 export async function updateShipment(id: string, input: UpdateShipmentInput, actor: Actor) {
   return prisma.$transaction(async (rawTransaction) => {
     const tx = rawTransaction as unknown as DestinationAssignmentTransactionClient & Pick<typeof prisma, "sealingRecord">;
     await tx.$queryRawUnsafe('SELECT "id" FROM "sealing_report" WHERE "id" = $1 FOR UPDATE', id);
-    const old = await tx.sealingReport.findUnique({ where: { id } });
+    const old = await tx.sealingReport.findUnique({
+      where: { id },
+      include: { shipmentProducts: { select: { productId: true }, orderBy: { sequence: "asc" } } },
+    });
     if (!old) throw new AppError(404, "Shipment/voyage tidak ditemukan");
     assertLoadingOwner(old.createdById, actor, old.loadingMasterId);
     if (old.status !== "DRAFT") throw new AppError(400, "Hanya shipment/voyage DRAFT yang dapat diperbarui");
@@ -252,16 +272,22 @@ export async function updateShipment(id: string, input: UpdateShipmentInput, act
       throw new AppError(403, "Hanya Supervisor atau Admin yang dapat mengganti assignment Loading Master");
     }
 
+    const productsChanged = input.productIds !== undefined || input.productId !== undefined;
+    const selectedProductIds: string[] = productsChanged
+      ? (input.productIds ?? (input.productId ? [input.productId] : []))
+      : (old.shipmentProducts.length > 0
+        ? old.shipmentProducts.map((item: { productId: string }) => item.productId)
+        : (old.productId ? [old.productId] : []));
     const references = {
       vesselId: input.vesselId ?? old.vesselId,
       activityId: input.activityId ?? old.activityId,
-      productId: input.productId ?? old.productId,
+      productIds: selectedProductIds,
       loadingPlantId: input.loadingPlantId ?? old.loadingPlantId,
       loadingJettyId: input.loadingJettyId ?? old.loadingJettyId,
     };
     const voyageNumber = input.voyageNumber ?? old.voyageNumber;
     const shipmentNumber = input.shipmentNumber ?? old.shipmentNumber;
-    if (!references.activityId || !references.productId || !references.loadingPlantId || !references.loadingJettyId || !voyageNumber || !shipmentNumber) {
+    if (!references.activityId || references.productIds.length === 0 || !references.loadingPlantId || !references.loadingJettyId || !voyageNumber || !shipmentNumber) {
       throw new AppError(400, "Laporan historis belum memiliki seluruh field inti shipment");
     }
     await Promise.all([
@@ -273,8 +299,16 @@ export async function updateShipment(id: string, input: UpdateShipmentInput, act
       throw new AppError(400, "Vessel tidak dapat diubah setelah titik segel disiapkan");
     }
 
+    const { productIds: _productIds, productId: _productId, ...scalarInput } = input;
+    if (productsChanged) {
+      await tx.sealingReportProduct.deleteMany({ where: { sealingReportId: id } });
+      await tx.sealingReportProduct.createMany({
+        data: selectedProductIds.map((productId: string, index: number) => ({ sealingReportId: id, productId, sequence: index + 1 })),
+      });
+    }
     const data = withoutUndefined({
-      ...input,
+      ...scalarInput,
+      ...(productsChanged ? { productId: selectedProductIds[0] } : {}),
       ...(input.voyageNumber ? { voyageNumber: input.voyageNumber.toUpperCase() } : {}),
       ...(input.shipmentNumber ? { shipmentNumber: input.shipmentNumber.toUpperCase() } : {}),
       ...(input.sealingStatus ? { sealingStatus: input.sealingStatus.toUpperCase() } : {}),
@@ -288,10 +322,13 @@ export async function updateShipment(id: string, input: UpdateShipmentInput, act
         entityType: "SHIPMENT_VOYAGE",
         entityId: id,
         oldData: asJson(old),
-        newData: asJson(data),
+        newData: asJson({
+          ...data,
+          ...(productsChanged ? { productIds: selectedProductIds } : {}),
+        }),
       },
     });
-    return updated;
+    return withReportCompatibility(updated);
   });
 }
 
@@ -359,7 +396,7 @@ export async function assignShipmentDestination(id: string, input: DestinationAs
         }),
       },
     });
-    return updated;
+    return withReportCompatibility(updated);
   });
 }
 
@@ -433,7 +470,7 @@ export async function createReport(input: CreateReportInput, actor: Actor) {
   const id = randomUUID();
   const data = withoutUndefined({ id, reportNo: input.reportNo.toUpperCase(), vesselId: input.vesselId, originTerminalId: input.originTerminalId, destinationTerminalId: input.destinationTerminalId, loadingMasterId: actor.role === "LOADING_MASTER" || actor.role === "SUPERVISOR" ? actor.id : undefined, unloadingMasterId: input.unloadingMasterId, createdById: actor.id, cargo: input.cargo, operationType: input.operationType, reportDateTime: input.reportDateTime, loadingMasterSurveyorName: input.loadingMasterSurveyorName, portName: input.portName, remarks: input.remarks });
   const [created] = await prisma.$transaction([prisma.sealingReport.create({ data, include: reportInclude }), audit(actor.id, "CREATE", "SEALING_REPORT", id, undefined, data)]);
-  return created;
+  return withReportCompatibility(created);
 }
 
 export async function updateReport(id: string, input: UpdateReportInput, actor: Actor) {
@@ -459,7 +496,7 @@ export async function updateReport(id: string, input: UpdateReportInput, actor: 
     const data = withoutUndefined({ ...input, ...(input.reportNo ? { reportNo: input.reportNo.toUpperCase() } : {}) });
     const updated = await tx.sealingReport.update({ where: { id }, data, include: reportInclude });
     await tx.auditLog.create({ data: { userId: actor.id, action: "UPDATE", entityType: "SEALING_REPORT", entityId: id, oldData: asJson(old), newData: asJson(data) } });
-    return updated;
+    return withReportCompatibility(updated);
   });
 }
 
@@ -580,6 +617,27 @@ function withSnapshotDrawing<T extends {
       drawingFileUrl: vessel.drawingFileUrl === undefined ? report.vessel.drawingFileUrl : vessel.drawingFileUrl,
       drawingLink: vessel.drawingLink === undefined ? report.vessel.drawingLink : vessel.drawingLink,
     },
+  };
+}
+
+function withReportCompatibility<T extends {
+  formConfigurationSnapshot: unknown;
+  vessel: { drawingFileUrl: string | null; drawingLink: string | null };
+  productId: string | null;
+  product: { id: string; name: string } | null;
+  shipmentProducts: Array<{ product: { id: string; name: string }; sequence: number }>;
+}>(report: T) {
+  const withDrawing = withSnapshotDrawing(report);
+  const products = withDrawing.shipmentProducts.length > 0
+    ? withDrawing.shipmentProducts.map((item) => item.product)
+    : (withDrawing.product ? [withDrawing.product] : []);
+  const { shipmentProducts: _shipmentProducts, ...rest } = withDrawing;
+  return {
+    ...rest,
+    productId: products[0]?.id ?? withDrawing.productId,
+    product: products[0] ?? withDrawing.product,
+    productIds: products.map((product) => product.id),
+    products,
   };
 }
 
@@ -1047,6 +1105,10 @@ type LifecycleReport = {
   vessel: { id: string; name: string; imoNumber: string | null; isActive: boolean };
   activity: { id: string; code: string; name: string; isActive: boolean } | null;
   product: { id: string; name: string; isActive: boolean } | null;
+  shipmentProducts: Array<{
+    sequence: number;
+    product: { id: string; name: string; isActive: boolean };
+  }>;
   loadingPlant: { id: string; code: string; name: string; isActive: boolean } | null;
   loadingJetty: { id: string; name: string; isActive: boolean } | null;
   dischargePlant: { id: string; code: string; name: string; isActive: boolean } | null;
@@ -1109,6 +1171,10 @@ async function loadLifecycleReport(tx: SnapshotTransactionClient, reportId: stri
       vessel: { select: { id: true, name: true, imoNumber: true, isActive: true } },
       activity: { select: { id: true, code: true, name: true, isActive: true } },
       product: { select: { id: true, name: true, isActive: true } },
+      shipmentProducts: {
+        select: { sequence: true, product: { select: { id: true, name: true, isActive: true } } },
+        orderBy: { sequence: "asc" },
+      },
       loadingPlant: { select: { id: true, code: true, name: true, isActive: true } },
       loadingJetty: { select: { id: true, name: true, isActive: true } },
       dischargePlant: { select: { id: true, code: true, name: true, isActive: true } },
@@ -1187,6 +1253,9 @@ async function evaluateLifecycleReport(tx: SnapshotTransactionClient, report: Li
   }
 
   if (isCanonicalShipment) {
+    const products = report.shipmentProducts.length > 0
+      ? report.shipmentProducts.map((item) => item.product)
+      : (report.product ? [report.product] : []);
     const loadingBa = await tx.beritaAcaraDocument.findUnique({
       where: { sealingReportId_phase: { sealingReportId: report.id, phase: "LOADING" } },
       select: { status: true },
@@ -1210,7 +1279,7 @@ async function evaluateLifecycleReport(tx: SnapshotTransactionClient, report: Li
     const mandatoryFields: Array<[unknown, string]> = [
       [report.activityId, "activityId"],
       [report.voyageNumber, "voyageNumber"],
-      [report.productId, "productId"],
+      [products.length > 0 ? products : null, "productIds"],
       [report.loadingPlantId, "loadingPlantId"],
       [report.loadingJettyId, "loadingJettyId"],
       [report.sealingStatus, "sealingStatus"],
@@ -1223,7 +1292,9 @@ async function evaluateLifecycleReport(tx: SnapshotTransactionClient, report: Li
     if (!report.activity?.isActive || !supportedActivityCodes.includes(report.activity.code.toUpperCase() as typeof supportedActivityCodes[number])) {
       commonDepartureErrors.push({ code: "ACTIVITY_INVALID", message: "Activity harus aktif dan berkode LOADING, DISCHARGE, atau ROB" });
     }
-    if (!report.product?.isActive) commonDepartureErrors.push({ code: "PRODUCT_INACTIVE", message: "Product shipment tidak aktif" });
+    if (products.some((product) => !product.isActive)) {
+      commonDepartureErrors.push({ code: "PRODUCT_INACTIVE", message: "Satu atau lebih Product shipment tidak aktif" });
+    }
     if (!report.loadingPlant?.isActive || !report.loadingJetty?.isActive) commonDepartureErrors.push({ code: "LOADING_LOCATION_INACTIVE", message: "Loading Plant dan Jetty harus aktif" });
     if (report.loadingPlantId && report.loadingJettyId && !(await tx.plantJettyAssignment.findUnique({ where: { plantId_jettyId: { plantId: report.loadingPlantId, jettyId: report.loadingJettyId } }, select: { id: true } }))) {
       commonDepartureErrors.push({ code: "LOADING_JETTY_MISMATCH", message: "Loading Jetty tidak terdaftar pada Loading Plant" });
@@ -1441,7 +1512,10 @@ export async function transitionReport(
         voyageNumber: report.voyageNumber,
         activity: report.activity,
         vessel: report.vessel,
-        product: report.product,
+        product: report.shipmentProducts[0]?.product ?? report.product,
+        products: report.shipmentProducts.length > 0
+          ? report.shipmentProducts.map((item) => item.product)
+          : (report.product ? [report.product] : []),
         loadingPlant: report.loadingPlant,
         loadingJetty: report.loadingJetty,
         dischargePlant: report.dischargePlant,

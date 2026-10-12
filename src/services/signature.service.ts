@@ -382,6 +382,10 @@ export async function finalizeBaDocument(reportId: string, phase: BeritaAcaraPha
         vessel: { select: { id: true, name: true, imoNumber: true, isActive: true } },
         activity: { select: { id: true, code: true, name: true } },
         product: { select: { id: true, name: true } },
+        shipmentProducts: {
+          select: { sequence: true, product: { select: { id: true, name: true } } },
+          orderBy: { sequence: "asc" },
+        },
         loadingPlant: { select: { id: true, code: true, name: true, isActive: true } },
         loadingJetty: { select: { id: true, name: true, isActive: true } },
         dischargePlant: { select: { id: true, code: true, name: true, isActive: true } },
@@ -706,7 +710,10 @@ export async function finalizeBaDocument(reportId: string, phase: BeritaAcaraPha
         remarks: source.remarks,
         vessel: source.vessel,
         activity: source.activity,
-        product: source.product,
+        product: source.shipmentProducts[0]?.product ?? source.product,
+        products: source.shipmentProducts.length > 0
+          ? source.shipmentProducts.map((item: { product: { id: string; name: string } }) => item.product)
+          : (source.product ? [source.product] : []),
         loadingPlant: source.loadingPlant,
         loadingJetty: source.loadingJetty,
         dischargePlant: source.dischargePlant,

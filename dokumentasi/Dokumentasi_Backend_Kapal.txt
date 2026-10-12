@@ -318,7 +318,8 @@ Endpoint canonical:
 - POST   /shipments/:id/finalize atau /voyages/:id/finalize
 
 Create canonical mewajibkan vesselId, activityId, reportDateTime, voyageNumber,
-shipmentNumber, productId, loadingPlantId, dan loadingJettyId. Destination
+shipmentNumber, productIds (minimal satu Product aktif), loadingPlantId, dan
+loadingJettyId. productId tunggal hanya alias kompatibilitas produk pertama. Destination
 dischargePlantId/dischargeJettyId boleh kosong; jika dikirim harus lengkap sebagai
 pasangan aktif dengan PlantJettyAssignment yang valid. Destination yang ditunda
 hanya dapat dipilih oleh assigned LOADING_MASTER, SUPERVISOR, atau ADMIN setelah

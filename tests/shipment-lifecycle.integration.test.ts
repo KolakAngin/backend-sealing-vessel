@@ -74,6 +74,7 @@ test("Lifecycle shipment LOADING, DISCHARGE, ROB, validasi gagal, dan final snap
   let createdFormVersionId: string | undefined;
   let vesselId = "";
   let productId = "";
+  let secondProductId = "";
   let loadingPlantId = "";
   let dischargePlantId = "";
   let loadingJettyId = "";
@@ -171,6 +172,8 @@ test("Lifecycle shipment LOADING, DISCHARGE, ROB, validasi gagal, dan final snap
 
     const product = await prisma.product.create({ data: { name: `Lifecycle Product ${suffix}` } });
     productId = product.id;
+    const secondProduct = await prisma.product.create({ data: { name: `Lifecycle Product 2 ${suffix}` } });
+    secondProductId = secondProduct.id;
     const loadingPlant = await prisma.plant.create({ data: { code: `LL${suffix}`.slice(0, 20), name: `Lifecycle Loading ${suffix}` } });
     loadingPlantId = loadingPlant.id;
     const dischargePlant = await prisma.plant.create({ data: { code: `LD${suffix}`.slice(0, 20), name: `Lifecycle Discharge ${suffix}` } });
@@ -206,7 +209,7 @@ test("Lifecycle shipment LOADING, DISCHARGE, ROB, validasi gagal, dan final snap
         reportDateTime: new Date().toISOString(),
         voyageNumber: `LIFE-VOY-${suffix}-${shipmentSerial}`,
         shipmentNumber: `LIFE-SHP-${suffix}-${shipmentSerial}`,
-        productId,
+        productIds: [productId, secondProductId],
         loadingPlantId,
         loadingJettyId,
         ...(includeDestination ? { dischargePlantId, dischargeJettyId } : {}),
@@ -426,6 +429,14 @@ test("Lifecycle shipment LOADING, DISCHARGE, ROB, validasi gagal, dan final snap
     );
     assert.equal(signatureResponse.response.status, 201, JSON.stringify(signatureResponse.body));
     await finalizeLoadingBa(reportId);
+    const loadingProductSnapshot = await prisma.beritaAcaraDocument.findUnique({
+      where: { sealingReportId_phase: { sealingReportId: reportId, phase: "LOADING" } },
+      select: { snapshot: true },
+    });
+    const frozenProducts = (loadingProductSnapshot?.snapshot as {
+      report?: { products?: Array<{ id: string }> };
+    } | null)?.report?.products;
+    assert.deepEqual(frozenProducts?.map((product) => product.id), [productId, secondProductId]);
     const loadingPdf = await call<{ checksumSha256: string }>(`/shipments/${reportId}/ba/loading/pdf`, json("POST", {}));
     assert.equal(loadingPdf.response.status, 201, JSON.stringify(loadingPdf.body));
     loadingBaPdfChecksum = loadingPdf.body.data.checksumSha256;
@@ -787,6 +798,7 @@ test("Lifecycle shipment LOADING, DISCHARGE, ROB, validasi gagal, dan final snap
     if (loadingPlantId) await prisma.plant.delete({ where: { id: loadingPlantId } }).catch(() => {});
     if (dischargePlantId) await prisma.plant.delete({ where: { id: dischargePlantId } }).catch(() => {});
     if (productId) await prisma.product.delete({ where: { id: productId } }).catch(() => {});
+    if (secondProductId) await prisma.product.delete({ where: { id: secondProductId } }).catch(() => {});
     await prisma.activity.deleteMany({ where: { id: { in: createdActivityIds } } });
     if (createdFormVersionId) await prisma.formTkoVersion.delete({ where: { id: createdFormVersionId } }).catch(() => {});
     await prisma.sealingCategory.deleteMany({ where: { id: { in: createdCategoryIds } } });

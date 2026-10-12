@@ -67,6 +67,7 @@ type FinalSnapshot = {
     activity: { code: string; name: string } | null;
     vessel: { id: string; name: string; imoNumber: string | null };
     product: { name: string } | null;
+    products?: Array<{ id?: string; name: string }>;
     loadingPlant: { code: string; name: string } | null;
     loadingJetty: { name: string } | null;
     dischargePlant: { code: string; name: string } | null;
@@ -347,6 +348,9 @@ function location(plant: { code: string; name: string } | null, jetty: { name: s
 
 function writeHeader(xml: string, snapshot: FinalSnapshot, pageIndex: number, pageCount: number) {
   const report = snapshot.report;
+  const productNames = report.products?.length
+    ? report.products.map((product) => product.name).join(", ")
+    : (report.product?.name ?? "");
   const activity = report.activity?.code?.toUpperCase() ?? report.activity?.name ?? "";
   const loading = location(report.loadingPlant, report.loadingJetty);
   const discharge = location(report.dischargePlant, report.dischargeJetty);
@@ -355,7 +359,7 @@ function writeHeader(xml: string, snapshot: FinalSnapshot, pageIndex: number, pa
     C2: header,
     U9: report.vessel.name,
     U11: `Loading: ${loading || "-"}\nDischarge: ${discharge || "-"}`,
-    U13: report.product?.name ?? "",
+    U13: productNames,
     U15: formatDate(report.reportDateTime),
     AQ20: activity === "DISCHARGE" ? discharge : loading,
     Y22: activity,

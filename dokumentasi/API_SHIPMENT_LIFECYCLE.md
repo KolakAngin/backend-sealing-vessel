@@ -67,7 +67,7 @@ Untuk shipment canonical:
 
 1. status perjalanan harus `DRAFT`;
 2. seluruh field inti shipment dan pasangan destination harus lengkap;
-3. Vessel, Activity, Product, Plant, dan Jetty harus aktif;
+3. Vessel, Activity, seluruh Product pada `productIds`, Plant, dan Jetty harus aktif;
 4. Activity hanya `LOADING`, `DISCHARGE`, atau `ROB`;
 5. pasangan Loading Plant–Jetty dan Discharge Plant–Jetty harus masih valid;
 6. Loading Master dan Unloading Master harus valid dan aktif;
@@ -115,7 +115,7 @@ Endpoint validasi bersifat read-only dan tidak menjalankan transisi.
 
 Untuk shipment canonical, finalisasi lifecycle menggunakan snapshot BA UNLOADING yang sudah immutable sebagai `SealingReport.finalSnapshot`; data live tidak dipotret ulang. Snapshot tersebut berisi:
 
-- header shipment, activity, vessel, product, Plant/Jetty, assignment, dan waktu lifecycle;
+- header shipment, activity, vessel, seluruh daftar produk, Plant/Jetty, assignment, dan waktu lifecycle;
 - snapshot konfigurasi A–H;
 - seluruh sealing record, point snapshot, status, catatan;
 - seluruh nomor segel dan verification;

@@ -73,7 +73,7 @@ Hak akses create/update/delete mengikuti alur existing: `ADMIN`, `SUPERVISOR`, a
   "reportDateTime": "2026-09-07T08:00:00.000Z",
   "voyageNumber": "VOY-001",
   "shipmentNumber": "SHP-001",
-  "productId": "UUID",
+  "productIds": ["UUID-PRODUK-1", "UUID-PRODUK-2"],
   "loadingPlantId": "UUID",
   "loadingJettyId": "UUID",
   "dischargePlantId": "UUID",
@@ -81,13 +81,13 @@ Hak akses create/update/delete mengikuti alur existing: `ADMIN`, `SUPERVISOR`, a
 }
 ```
 
-`dischargePlantId` dan `dischargeJettyId` opsional saat create, tetapi harus dikirim sebagai pasangan. Bila dikirim, pasangan langsung divalidasi. `sealingStatus` boleh tidak dikirim; server mengisinya dengan `READY` dan mengembalikannya dalam respons. Field assignment `loadingMasterId` dapat dikirim eksplisit; bila caller adalah Loading Master/Supervisor, nilainya default ke caller. `unloadingMasterId` boleh kosong saat draft tetapi wajib sebelum depart. Field opsional lain: `loadingMasterSurveyorName` dan `remarks`.
+`productIds` wajib berisi minimal satu UUID unik dan urutannya dipertahankan pada response maupun snapshot BA. Alias lama `productId` masih diterima sebagai satu produk; jika keduanya dikirim, `productId` harus sama dengan elemen pertama `productIds`. Response menyediakan `productIds` dan `products`, sedangkan `productId`/`product` menunjuk produk pertama untuk kompatibilitas. `dischargePlantId` dan `dischargeJettyId` opsional saat create, tetapi harus dikirim sebagai pasangan. Bila dikirim, pasangan langsung divalidasi. `sealingStatus` boleh tidak dikirim; server mengisinya dengan `READY` dan mengembalikannya dalam respons. Field assignment `loadingMasterId` dapat dikirim eksplisit; bila caller adalah Loading Master/Supervisor, nilainya default ke caller. `unloadingMasterId` boleh kosong saat draft tetapi wajib sebelum depart. Field opsional lain: `loadingMasterSurveyorName` dan `remarks`.
 
 Aturan bisnis:
 
 - `shipmentNumber` dinormalisasi uppercase dan unik;
 - `voyageNumber` dinormalisasi uppercase, tetapi sumber tidak menetapkannya unik;
-- Vessel, Activity, Product, Loading Plant, dan Loading Jetty harus aktif; destination yang dikirim juga harus aktif;
+- Vessel, Activity, seluruh Product, Loading Plant, dan Loading Jetty harus aktif; destination yang dikirim juga harus aktif;
 - kode Activity hanya `LOADING`, `DISCHARGE`, atau `ROB`;
 - loading Jetty harus memiliki assignment ke loading Plant;
 - discharge Jetty yang dikirim harus memiliki assignment ke discharge Plant;
@@ -97,7 +97,7 @@ Aturan bisnis:
 
 ### Update
 
-`PATCH` menerima subset field create untuk field selain destination, tetapi hasil gabungan dengan data tersimpan harus tetap mempunyai field inti shipment. Perubahan `dischargePlantId`/`dischargeJettyId` melalui `PATCH` ditolak agar gate bisnis tidak dapat dilewati. Bila data historis belum mempunyai `sealingStatus`, update mengisinya dengan `READY`. Master yang dirujuk divalidasi ulang dan harus aktif. Vessel tidak dapat diubah setelah sealing record disiapkan. Update menghasilkan audit `UPDATE`.
+`PATCH` menerima subset field create untuk field selain destination, termasuk penggantian seluruh daftar melalui `productIds`. Daftar baru menggantikan relasi produk sebelumnya secara atomik dan tidak boleh kosong/duplikat. Hasil gabungan dengan data tersimpan harus tetap mempunyai field inti shipment. Perubahan `dischargePlantId`/`dischargeJettyId` melalui `PATCH` ditolak agar gate bisnis tidak dapat dilewati. Bila data historis belum mempunyai `sealingStatus`, update mengisinya dengan `READY`. Master yang dirujuk divalidasi ulang dan harus aktif. Vessel tidak dapat diubah setelah sealing record disiapkan. Update menghasilkan audit `UPDATE`.
 
 ### Destination assignment
 
@@ -121,12 +121,14 @@ Hanya record `DRAFT` yang belum mempunyai `BeritaAcaraDocument` yang dapat dihap
 
 Selain `page`, `limit`, `search`, `status`, dan `sortOrder`, filter tersedia untuk:
 
-- `vesselId`, `activityId`, dan `productId`;
+- `vesselId`, `activityId`, dan `productId` (filter cocok bila produk terdapat di mana pun dalam `productIds` shipment);
 - `loadingPlantId`, `loadingJettyId`, `dischargePlantId`, dan `dischargeJettyId`;
 - `voyageNumber`, `shipmentNumber`, serta `sealingStatus`.
 
 ## 4. Kompatibilitas laporan lama
 
 Endpoint `/api/v1/reports` dipertahankan sebagai endpoint legacy dengan payload lama. Data lama tidak dihapus, nomor `reportNo` tidak dipetakan otomatis menjadi shipment number, dan Terminal lama tidak ditebak sebagai Plant. Alias destination assignment pada `/reports/:id` hanya bekerja untuk record canonical; laporan legacy ditolak agar field Plant–Jetty tidak bercampur dengan Terminal.
+
+Migration multi-produk membackfill setiap `SealingReport.productId` lama menjadi baris urutan pertama pada `SealingReportProduct`. Kolom dan relasi tunggal lama tidak dihapus; shipment canonical baru menggunakan relasi tersebut sebagai sumber utama dan mengisinya hanya sebagai alias produk pertama.
 
 STEP 4 tidak mengubah konfigurasi record A–H. Implementasi pengisian transaksinya ditambahkan secara terpisah pada STEP 6; attachment, signature, export XLSX/PDF, dan frontend tetap tidak diubah oleh STEP 6.

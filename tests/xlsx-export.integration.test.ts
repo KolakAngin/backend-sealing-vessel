@@ -143,6 +143,14 @@ test("XLSX operasional Queen Sofia memetakan nilai dan mempertahankan struktur t
     ]);
     for (const [cell, value] of Object.entries(golden.expected)) assert.equal(cellValue(outputSheet, cell), value, cell);
     assert.match(cellValue(outputSheet, "C2"), /Voyage: VOY-QS-2026-01/);
+    const multiProductSnapshot = {
+      ...structuredClone(finalSnapshot),
+      report: { ...structuredClone(finalSnapshot.report), products: [{ name: golden.report.product }, { name: "MFO" }] },
+    };
+    const multiProductWorkbook = await buildOfficialWorkbook(multiProductSnapshot as never);
+    const multiProductZip = await JSZip.loadAsync(multiProductWorkbook.buffer);
+    const multiProductSheet = await multiProductZip.file("xl/worksheets/sheet1.xml")!.async("string");
+    assert.equal(cellValue(multiProductSheet, "U13"), `${golden.report.product}, MFO`);
     assert.match(cellValue(outputSheet, "U11"), /Loading: STS TABONEO \/ MT\. GLOBAL TOP/);
     assert.deepEqual(structuralFragments(outputSheet), structuralFragments(templateSheet));
     assert.equal((outputSheet.match(/<mergeCell /g) ?? []).length, golden.structure.mergeCount);

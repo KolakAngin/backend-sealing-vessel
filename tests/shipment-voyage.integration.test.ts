@@ -38,6 +38,7 @@ test("Shipment/voyage wajib, relasi Plant-Jetty, status terpisah, dan audit", as
   const createdActivityIds: string[] = [];
   let vesselId = "";
   let productId = "";
+  let secondProductId = "";
   let inactiveProductId = "";
   let unsupportedActivityId = "";
   let loadingPlantId = "";
@@ -70,6 +71,8 @@ test("Shipment/voyage wajib, relasi Plant-Jetty, status terpisah, dan audit", as
     vesselId = vessel.id;
     const product = await prisma.product.create({ data: { name: `Shipment Product ${suffix}`, isActive: true } });
     productId = product.id;
+    const secondProduct = await prisma.product.create({ data: { name: `Shipment Product 2 ${suffix}`, isActive: true } });
+    secondProductId = secondProduct.id;
     const inactiveProduct = await prisma.product.create({ data: { name: `Inactive Product ${suffix}`, isActive: false } });
     inactiveProductId = inactiveProduct.id;
     const unsupportedActivity = await prisma.activity.create({ data: { code: `OTHER-${suffix}`, name: "Unsupported", isActive: true } });
@@ -105,7 +108,7 @@ test("Shipment/voyage wajib, relasi Plant-Jetty, status terpisah, dan audit", as
       reportDateTime: new Date().toISOString(),
       voyageNumber: `VOY-${suffix}`,
       shipmentNumber: `SHP-${suffix}-1`,
-      productId,
+      productIds: [productId, secondProductId],
       loadingPlantId,
       loadingJettyId,
       dischargePlantId,
@@ -149,7 +152,7 @@ test("Shipment/voyage wajib, relasi Plant-Jetty, status terpisah, dan audit", as
 
     const inactiveReference = await call<unknown>(
       "/shipments",
-      json("POST", { ...payload, shipmentNumber: `SHP-${suffix}-INACTIVE`, productId: inactiveProductId }),
+      json("POST", { ...payload, shipmentNumber: `SHP-${suffix}-INACTIVE`, productIds: [productId, inactiveProductId] }),
     );
     assert.equal(inactiveReference.response.status, 400);
     assert.match(inactiveReference.body.message, /product.*tidak aktif/i);
@@ -169,6 +172,9 @@ test("Shipment/voyage wajib, relasi Plant-Jetty, status terpisah, dan audit", as
       sealingStatus: string;
       status: string;
       activity: { code: string };
+      productId: string;
+      productIds: string[];
+      products: Array<{ id: string; name: string }>;
       loadingPlant: { id: string };
       loadingJetty: { id: string };
     }>("/shipments", json("POST", payload));
@@ -178,6 +184,9 @@ test("Shipment/voyage wajib, relasi Plant-Jetty, status terpisah, dan audit", as
     assert.equal(created.body.data.shipmentNumber, payload.shipmentNumber);
     assert.equal(created.body.data.voyageNumber, payload.voyageNumber);
     assert.equal(created.body.data.activity.code, "LOADING");
+    assert.deepEqual(created.body.data.productIds, [productId, secondProductId]);
+    assert.deepEqual(created.body.data.products.map((product) => product.id), [productId, secondProductId]);
+    assert.equal(created.body.data.productId, productId, "productId lama harus menunjuk produk pertama");
     assert.equal(created.body.data.status, "DRAFT");
     assert.equal(created.body.data.sealingStatus, "READY");
     assert.equal(created.body.data.loadingPlant.id, loadingPlantId);
@@ -195,6 +204,31 @@ test("Shipment/voyage wajib, relasi Plant-Jetty, status terpisah, dan audit", as
       json("POST", { ...payload, shipmentNumber: payload.shipmentNumber.toLowerCase() }),
     );
     assert.equal(duplicate.response.status, 409);
+
+    const duplicateProduct = await call<unknown>(
+      "/shipments",
+      json("POST", {
+        ...payload,
+        voyageNumber: `VOY-${suffix}-DUP-PRODUCT`,
+        shipmentNumber: `SHP-${suffix}-DUP-PRODUCT`,
+        productIds: [productId, productId],
+      }),
+    );
+    assert.equal(duplicateProduct.response.status, 400);
+
+    const productsUpdated = await call<{ productId: string; productIds: string[]; products: Array<{ id: string }> }>(
+      `/shipments/${created.body.data.id}`,
+      json("PATCH", { productIds: [secondProductId, productId] }),
+    );
+    assert.equal(productsUpdated.response.status, 200, JSON.stringify(productsUpdated.body));
+    assert.equal(productsUpdated.body.data.productId, secondProductId);
+    assert.deepEqual(productsUpdated.body.data.productIds, [secondProductId, productId]);
+    assert.deepEqual(productsUpdated.body.data.products.map((product) => product.id), [secondProductId, productId]);
+    const storedProducts = await prisma.sealingReportProduct.findMany({
+      where: { sealingReportId: created.body.data.id },
+      orderBy: { sequence: "asc" },
+    });
+    assert.deepEqual(storedProducts.map((item: { productId: string }) => item.productId), [secondProductId, productId]);
 
     const patched = await call<{ status: string; sealingStatus: string }>(
       `/voyages/${created.body.data.id}`,
@@ -215,6 +249,9 @@ test("Shipment/voyage wajib, relasi Plant-Jetty, status terpisah, dan audit", as
     );
     assert.equal(listed.response.status, 200);
     assert.equal(listed.body.data.some((item) => item.id === created.body.data.id), true);
+    const listedBySecondProduct = await call<Array<{ id: string }>>(`/shipments?productId=${secondProductId}`);
+    assert.equal(listedBySecondProduct.response.status, 200);
+    assert.equal(listedBySecondProduct.body.data.some((item) => item.id === created.body.data.id), true);
 
     for (const [index, code] of (["DISCHARGE", "ROB"] as const).entries()) {
       const activityCreated = await call<{ id: string; activity: { code: string } }>(
@@ -315,6 +352,7 @@ test("Shipment/voyage wajib, relasi Plant-Jetty, status terpisah, dan audit", as
     if (loadingPlantId) await prisma.plant.delete({ where: { id: loadingPlantId } }).catch(() => {});
     if (dischargePlantId) await prisma.plant.delete({ where: { id: dischargePlantId } }).catch(() => {});
     if (productId) await prisma.product.delete({ where: { id: productId } }).catch(() => {});
+    if (secondProductId) await prisma.product.delete({ where: { id: secondProductId } }).catch(() => {});
     if (inactiveProductId) await prisma.product.delete({ where: { id: inactiveProductId } }).catch(() => {});
     if (unsupportedActivityId) await prisma.activity.delete({ where: { id: unsupportedActivityId } }).catch(() => {});
     await prisma.activity.deleteMany({ where: { id: { in: createdActivityIds } } });

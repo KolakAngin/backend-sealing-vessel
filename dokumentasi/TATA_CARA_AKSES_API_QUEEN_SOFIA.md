@@ -179,7 +179,7 @@ Content-Type: application/json
   "reportDateTime": "<ISO_DATETIME_AKTUAL>",
   "voyageNumber": "<VOYAGE_NUMBER_AKTUAL>",
   "shipmentNumber": "<SHIPMENT_NUMBER_UNIK>",
-  "productId": "<PRODUCT_ID_TERKONFIRMASI>",
+  "productIds": ["<PRODUCT_ID_TERKONFIRMASI>"],
   "loadingPlantId": "<LOADING_PLANT_ID>",
   "loadingJettyId": "<LOADING_JETTY_ID>",
   "loadingMasterId": "<LOADING_MASTER_USER_ID>",

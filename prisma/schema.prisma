@@ -241,11 +241,33 @@ model Product {
   createdAt DateTime @default(now()) @db.Timestamptz(3)
   updatedAt DateTime @updatedAt @db.Timestamptz(3)
 
-  sealingReports SealingReport[]
+  sealingReports   SealingReport[]
+  shipmentProducts SealingReportProduct[]
 
   @@index([sequence])
   @@index([isActive])
   @@map("m_product")
+}
+
+// Relasi canonical produk shipment. Kolom SealingReport.productId tetap
+// dipertahankan sebagai alias produk pertama untuk kompatibilitas integrasi
+// dan data historis sebelum dukungan multi-produk.
+model SealingReportProduct {
+  id String @id @default(uuid()) @db.Uuid
+
+  sealingReportId String @db.Uuid
+  productId       String @db.Uuid
+  sequence        Int
+
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+
+  sealingReport SealingReport @relation(fields: [sealingReportId], references: [id], onDelete: Cascade)
+  product       Product       @relation(fields: [productId], references: [id], onDelete: Restrict)
+
+  @@unique([sealingReportId, productId])
+  @@unique([sealingReportId, sequence])
+  @@index([productId])
+  @@map("sealing_report_product")
 }
 
 model UnitOfMeasure {
@@ -733,11 +755,12 @@ model SealingReport {
   formVersion       FormTkoVersion?    @relation(fields: [formVersionId], references: [id], onDelete: Restrict)
   vesselFormProfile VesselFormProfile? @relation(fields: [vesselFormProfileId], references: [id], onDelete: Restrict)
 
-  sealingRecords SealingRecord[]
-  signatures     ReportSignature[]
-  attachments    Attachment[]
-  pdfArtifact    PdfArtifact?
-  baDocuments    BeritaAcaraDocument[]
+  sealingRecords   SealingRecord[]
+  shipmentProducts SealingReportProduct[]
+  signatures       ReportSignature[]
+  attachments      Attachment[]
+  pdfArtifact      PdfArtifact?
+  baDocuments      BeritaAcaraDocument[]
 
   @@index([vesselId])
   @@index([originTerminalId])

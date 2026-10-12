@@ -76,7 +76,7 @@ test("PDF final Queen Sofia deterministik, tersimpan, A4, dan mempunyai appendix
     schemaVersion: 1, capturedAt: "2026-07-29T00:00:00.000Z", finalizedById: "snapshot-loading-master",
     report: {
       id: "snapshot-report", reportNo: "RPT-QS-PDF", shipmentNumber: `SHP-QS-PDF-${suffix}`, voyageNumber: "VOY-QS-2026-01",
-      activity: { code: "LOADING", name: "LOADING" }, vessel: { id: "snapshot-vessel", name: "OB. QUEEN SOFIA", imoNumber: null }, product: { name: "B40" },
+      activity: { code: "LOADING", name: "LOADING" }, vessel: { id: "snapshot-vessel", name: "OB. QUEEN SOFIA", imoNumber: null }, product: { name: "B40" }, products: [{ name: "B40" }, { name: "MFO" }],
       loadingPlant: { code: "TAB", name: "STS TABONEO" }, loadingJetty: { name: "MT. GLOBAL TOP" }, dischargePlant: { code: "MKS", name: "INTEGRATED TERMINAL MAKASSAR" }, dischargeJetty: { name: "JETTY 1" },
       sealingStatus: "COMPLETED", journeyStatus: "FINISH", sealingProcessStatus: "FINALIZED", reportDateTime: "2026-07-28T08:30:00.000Z", departedAt: null, arrivedAt: null, finishedAt: "2026-07-29T00:00:00.000Z",
       loadingMaster: { id: "snapshot-loading-master", fullName: "Loading Master Queen Sofia" }, unloadingMaster: { id: "snapshot-unloading-master", fullName: "Unloading Master Queen Sofia" }, remarks: null,
@@ -121,6 +121,7 @@ test("PDF final Queen Sofia deterministik, tersimpan, A4, dan mempunyai appendix
     const unloadingText = (await (await unloadingParsed.getPage(1)).getTextContent()).items.filter((item) => "str" in item).map((item) => item.str).join(" ");
     assert.match(unloadingText, /We are\s+Unloading Master Queen Sofia/);
     assert.match(unloadingText, /at port\s+INTEGRATED TERMINAL MAKASSAR \/ JETTY 1/);
+    assert.match(unloadingText, /B40, MFO/);
 
     const emptySealSnapshot = structuredClone(finalSnapshot);
     emptySealSnapshot.attachments = [];

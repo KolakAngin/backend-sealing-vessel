@@ -78,7 +78,7 @@ Backend menyimpan bentuk berikut secara dinamis; rendering/input pada frontend v
 
 ### Selesai — field wajib shipment STEP 4
 
-Endpoint canonical `/shipments` dan `/voyages` mewajibkan Vessel, Activity, tanggal (`reportDateTime`), Voyage Number, Shipment Number, Product, loading Plant/Jetty, discharge Plant/Jetty, dan Status Sealing. Activity hanya menerima master aktif berkode `LOADING`, `DISCHARGE`, atau `ROB`; seluruh referensi master harus aktif; dan pasangan Jetty harus mempunyai `PlantJettyAssignment`. `shipmentNumber` unik dan status sealing tersimpan terpisah dari `ReportStatus` perjalanan.
+Endpoint canonical `/shipments` dan `/voyages` mewajibkan Vessel, Activity, tanggal (`reportDateTime`), Voyage Number, Shipment Number, minimal satu Product, loading Plant/Jetty, discharge Plant/Jetty, dan Status Sealing. Daftar Product disimpan terurut pada `SealingReportProduct`; seluruh referensi master harus aktif. Activity hanya menerima master aktif berkode `LOADING`, `DISCHARGE`, atau `ROB`; pasangan Jetty harus mempunyai `PlantJettyAssignment`. `shipmentNumber` unik dan status sealing tersimpan terpisah dari `ReportStatus` perjalanan.
 
 ### Selesai — master database dan seed sheet kedua
 
@@ -229,6 +229,15 @@ Perubahan backend STEP 4:
 - create, update, dan delete shipment serta create/delete assignment menghasilkan audit log;
 - `/reports` dipertahankan sebagai endpoint legacy, sedangkan kontrak baru didokumentasikan pada [API_SHIPMENT_VOYAGE.md](./API_SHIPMENT_VOYAGE.md).
 
+### Selesai — multi-produk shipment pada 12 Oktober 2026
+
+- migration `20261012120000_add_multi_product_shipment` menambahkan `SealingReportProduct` dan membackfill seluruh `productId` historis sebagai produk urutan pertama;
+- create/update canonical menerima `productIds` non-kosong, unik, maksimal 100, dan memvalidasi seluruh Product aktif secara atomik;
+- response menyediakan `productIds`/`products`; `productId`/`product` tetap alias produk pertama bagi client lama;
+- filter `productId` mencari keanggotaan pada seluruh produk shipment;
+- snapshot BA LOADING/UNLOADING membekukan seluruh produk, sedangkan PDF dan XLSX menampilkan seluruh nama dipisahkan koma;
+- kolom `productId`, snapshot lama, dan payload tunggal tetap didukung tanpa menghilangkan data historis.
+
 Di luar lingkup dan tidak diubah: konfigurasi record A–H, attachment, signature, XLSX, PDF, dan frontend.
 
 Verifikasi STEP 4:
@@ -377,7 +386,7 @@ Perubahan backend STEP 9:
 - memakai `Form Segel Baru sesuai TKO (edit1).xlsx` secara langsung dan memverifikasi checksum SHA-256 sebelum generate;
 - memakai manipulasi OOXML terarah setelah audit membuktikan round-trip library workbook menghapus printer settings/calc chain dan mengubah struktur part;
 - membaca hanya `finalSnapshot` laporan `FINISH`, sehingga perubahan master/vessel setelah finalisasi tidak mengubah hasil lama;
-- memetakan header Shipment, vessel, activity, tanggal zona `Asia/Jakarta`, voyage/shipment number, product, loading/discharge Plant dan Jetty, serta sealing status;
+- memetakan header Shipment, vessel, activity, tanggal zona `Asia/Jakarta`, voyage/shipment number, seluruh product dari snapshot, loading/discharge Plant dan Jetty, serta sealing status;
 - memetakan section A-H, compartment/side/instance dinamis, beberapa nomor segel per titik, `NOT_APPLICABLE`, nama/waktu, dan citra tanda tangan;
 - menjaga formula narasi dan calc chain; hanya cached value formula vessel yang diselaraskan;
 - mempertahankan logo, styles, merge, lebar kolom, tinggi row, margin, orientasi, page break, dan binary printer settings;

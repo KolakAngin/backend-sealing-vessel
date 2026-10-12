@@ -91,6 +91,7 @@ export type UnloadingPdfSnapshot = {
     voyageNumber: string | null;
     vessel: { name: string; imoNumber?: string | null };
     product?: { name: string } | null;
+    products?: Array<{ id?: string; name: string }>;
     loadingPlant?: { code?: string; name: string } | null;
     loadingJetty?: { name: string } | null;
     dischargePlant?: { code?: string; name: string } | null;
@@ -293,10 +294,13 @@ function verificationRows(snapshot: UnloadingPdfSnapshot): VerificationRow[] {
 
 function renderSummary(page: PDFPage, font: PDFFont, bold: PDFFont, snapshot: UnloadingPdfSnapshot) {
   const report = snapshot.report;
+  const productNames = report.products?.length
+    ? report.products.map((product) => product.name).join(", ")
+    : (report.product?.name ?? "-");
   const fields: Array<[string, string]> = [
     ["Shipment / Voyage", `${report.shipmentNumber ?? "-"} / ${report.voyageNumber ?? "-"}`],
     ["Vessel / IMO", `${report.vessel.name} / ${report.vessel.imoNumber ?? "-"}`],
-    ["Product", report.product?.name ?? "-"],
+    ["Product", productNames],
     ["Loading", `${report.loadingPlant?.name ?? "-"} / ${report.loadingJetty?.name ?? "-"}`],
     ["Destination", `${report.dischargePlant?.name ?? "-"} / ${report.dischargeJetty?.name ?? "-"}`],
     ["Tanggal laporan", formatDate(report.reportDateTime)],

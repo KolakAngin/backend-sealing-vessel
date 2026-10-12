@@ -717,7 +717,7 @@ curl -X POST http://localhost:5001/api/v1/shipments \
     "reportDateTime":"2026-09-10T08:00:00.000Z",
     "voyageNumber":"VOY-001",
     "shipmentNumber":"SHP-001",
-    "productId":"<PRODUCT_ID>",
+    "productIds":["<PRODUCT_ID_1>","<PRODUCT_ID_2>"],
     "loadingPlantId":"<LOADING_PLANT_ID>",
     "loadingJettyId":"<LOADING_JETTY_ID>",
     "dischargePlantId":"<DISCHARGE_PLANT_ID>",
@@ -829,7 +829,7 @@ curl -X POST http://localhost:5001/api/v1/shipments \
     "reportDateTime":"2026-09-10T08:00:00.000Z",
     "voyageNumber":"VOY-002",
     "shipmentNumber":"SHP-002",
-    "productId":"<PRODUCT_ID>",
+    "productIds":["<PRODUCT_ID_1>","<PRODUCT_ID_2>"],
     "loadingPlantId":"<LOADING_PLANT_ID>",
     "loadingJettyId":"<LOADING_JETTY_ID>",
     "dischargePlantId":"<DISCHARGE_PLANT_ID>",
@@ -867,7 +867,7 @@ curl "http://localhost:5001/api/v1/shipments?page=1&limit=20&status=DRAFT&sortOr
   -H "Authorization: Bearer <SUPERVISOR_TOKEN>"
 ```
 
-Filter tersedia: `search`, `status`, `vesselId`, `activityId`, `productId`, ID Plant/Jetty, `voyageNumber`, `shipmentNumber`, dan `sealingStatus`.
+Filter tersedia: `search`, `status`, `vesselId`, `activityId`, `productId`, ID Plant/Jetty, `voyageNumber`, `shipmentNumber`, dan `sealingStatus`. Filter `productId` mencocokkan produk tersebut pada seluruh daftar produk shipment.
 
 ### Langkah 2 — Lihat detail
 
@@ -1010,7 +1010,7 @@ curl -X POST http://localhost:5001/api/v1/shipments \
     "reportDateTime":"2026-09-10T08:00:00.000Z",
     "voyageNumber":"VOY-003",
     "shipmentNumber":"SHP-003",
-    "productId":"<PRODUCT_ID>",
+    "productIds":["<PRODUCT_ID_1>","<PRODUCT_ID_2>"],
     "loadingPlantId":"<LOADING_PLANT_ID>",
     "loadingJettyId":"<LOADING_JETTY_ID>",
     "sealingStatus":"READY",
@@ -1029,7 +1029,7 @@ Semua field berikut wajib:
 - `reportDateTime` dalam format tanggal ISO 8601;
 - `voyageNumber`;
 - `shipmentNumber` yang harus unik;
-- `productId`;
+- `productIds`, array minimal satu UUID Product aktif tanpa duplikasi;
 - loading Plant–Jetty.
 
 `dischargePlantId` dan `dischargeJettyId` boleh belum diisi saat membuat draft. Jika destination sudah diketahui pada create, keduanya harus dikirim bersama dan harus membentuk pasangan Plant–Jetty aktif yang valid. `sealingStatus` opsional dan diberi default oleh server. `unloadingMasterId` boleh belum diisi saat membuat draft, tetapi wajib sebelum depart.
@@ -1037,6 +1037,8 @@ Semua field berikut wajib:
 Backend saat ini belum menyediakan endpoint daftar user untuk Loading Master. ID Unloading Master harus diperoleh dari pilihan yang sebelumnya disediakan Admin/frontend. Jika frontend perlu memuat pilihan tersebut langsung dari backend untuk role LM, diperlukan endpoint lookup assignee baru.
 
 Simpan `data.id` dari response sebagai `<SHIPMENT_ID>`.
+
+Response shipment mengembalikan `productIds` dan `products` sesuai urutan request. `productId` dan `product` tetap dikembalikan sebagai alias produk pertama untuk integrasi lama. Saat update, kirim `productIds` lengkap karena daftar tersebut menggantikan seluruh produk shipment secara atomik.
 
 > Dalam backend, `<SHIPMENT_ID>` juga dipakai sebagai `reportId`. Keduanya menunjuk record yang sama.
 
