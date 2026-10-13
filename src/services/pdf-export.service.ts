@@ -13,8 +13,8 @@ import { AppError } from "../utils/app-error.js";
 import { extensionForMimeType } from "../utils/uploaded-file.js";
 
 export const PDF_CONTENT_TYPE = "application/pdf";
-export const NATIVE_PDF_LAYOUT_SHA256 = "248d76c5c7c2018fef914f87330ee5edba2a2c6634b73d83ce8b8c8499409a53";
-export const PDF_RENDERER_VERSION = "tko-native-layout-v5";
+export const NATIVE_PDF_LAYOUT_SHA256 = "42deff3f2c917c857377a716dcc5486dca24ca0c724497b22c8ff4953e2e34f0";
+export const PDF_RENDERER_VERSION = "tko-native-layout-v6-signature-validity";
 
 export type PdfActor = { id: string; role: UserRole };
 
@@ -57,6 +57,8 @@ type FinalSignature = {
   signedAt: string | null;
   signatureMimeType: string | null;
   signatureChecksumSha256: string | null;
+  isSigned?: boolean;
+  signatureStatus?: "MISSING" | "UNSIGNED" | "INVALID_FILE" | "SIGNED";
 };
 export type PdfFinalSnapshot = {
   schemaVersion: number;
@@ -78,12 +80,23 @@ export type PdfFinalSnapshot = {
     dischargePlant: { code: string; name: string } | null;
     dischargeJetty: { name: string } | null;
     sealingStatus: string | null;
+    journeyStatus?: string;
+    sealingProcessStatus?: string;
+    departedAt?: string | Date | null;
+    arrivedAt?: string | Date | null;
+    finishedAt?: string | Date | null;
+    remarks?: string | null;
     reportDateTime: string;
     loadingMaster: { id?: string; fullName: string } | null;
     unloadingMaster: { id?: string; fullName: string } | null;
   };
   formConfigurationSnapshot: { sections: Array<{ code: string; isAvailable: boolean }>; points: SnapshotPoint[] };
   signatures: FinalSignature[];
+  signatureValidation?: {
+    isComplete: boolean;
+    incompleteRoles: Array<FinalSignature["role"]>;
+    roles?: Array<Record<string, unknown>>;
+  };
   records: FinalRecord[];
   attachments?: SnapshotAttachment[];
 };
@@ -615,21 +628,37 @@ async function embedStoredImage(document: PDFDocument, id: string, mimeType: str
   return stored.mimeType === "image/jpeg" ? document.embedJpg(stored.bytes) : document.embedPng(stored.bytes);
 }
 
-async function renderNativeSignatures(document: PDFDocument, page: PDFPage, font: PDFFont, bold: PDFFont, signatures: FinalSignature[]) {
-  const roles = ["CHIEF_OFFICER", "TERMINAL_REPRESENTATIVE", "SURVEYOR"] as const;
-  const labels = ["Chief Officer", "Terminal Representative", "Surveyor"];
+async function renderNativeSignatures(
+  document: PDFDocument,
+  page: PDFPage,
+  font: PDFFont,
+  bold: PDFFont,
+  signatures: FinalSignature[],
+  phaseAware: boolean,
+) {
+  const roles = ["CHIEF_OFFICER", "SURVEYOR", "TERMINAL_REPRESENTATIVE"] as const;
+  const labels = ["Chief Officer", "Surveyor", "Terminal Representative"];
   const gap = 8;
   const width = (523 - gap * 2) / 3;
   const xs = [36, 36 + width + gap, 36 + (width + gap) * 2];
   const boxY = 51;
   const boxHeight = 151;
   for (let index = 0; index < roles.length; index += 1) {
-    const signature = signatures.find((item) => item.role === roles[index]);
+    const candidate = signatures.find((item) => item.role === roles[index]);
+    const signature = candidate?.isSigned === false ? undefined : candidate;
     const x = xs[index]!;
     drawCell(page, font, bold, labels[index], { x, y: boxY + boxHeight - 22, width, height: 22 }, { bold: true, align: "center", fill: COLOR.header, size: 7 });
     page.drawRectangle({ x, y: boxY, width, height: boxHeight - 22, color: COLOR.white, borderColor: COLOR.line, borderWidth: 0.55 });
     if (!signature) {
-      page.drawText("Belum ditandatangani", { x: x + (width - font.widthOfTextAtSize("Belum ditandatangani", 6.5)) / 2, y: boxY + 58, size: 6.5, font, color: COLOR.muted });
+      if (!phaseAware) {
+        const unsigned = "Belum ditandatangani";
+        page.drawText(unsigned, { x: x + (width - font.widthOfTextAtSize(unsigned, 6.5)) / 2, y: boxY + 58, size: 6.5, font, color: COLOR.muted });
+        continue;
+      }
+      const invalid = "BA TIDAK VALID";
+      const unsigned = "BELUM DITANDATANGANI";
+      page.drawText(invalid, { x: x + (width - bold.widthOfTextAtSize(invalid, 8)) / 2, y: boxY + 70, size: 8, font: bold, color: rgb(0.78, 0.04, 0.04) });
+      page.drawText(unsigned, { x: x + (width - bold.widthOfTextAtSize(unsigned, 6.2)) / 2, y: boxY + 56, size: 6.2, font: bold, color: rgb(0.78, 0.04, 0.04) });
       continue;
     }
     const nameY = boxY + 12;
@@ -733,7 +762,7 @@ export async function buildOfficialPdf(snapshotInput: PdfFinalSnapshot) {
     }
     if (pageIndex === contentPages.length - 1) {
       page.drawText("Kindly acknowledge the above report by signing below.", { x: 36, y: 216, size: 7.2, font, color: COLOR.ink });
-      await renderNativeSignatures(output, page, font, bold, snapshot.signatures);
+      await renderNativeSignatures(output, page, font, bold, snapshot.signatures, snapshot.phase !== undefined);
     }
   }
   await appendPhotoPages(output, snapshot, font, bold, logo, formPageCount, pageCount);

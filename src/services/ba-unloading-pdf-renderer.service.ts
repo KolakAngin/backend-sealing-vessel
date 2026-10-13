@@ -8,9 +8,9 @@ import { resolveFile } from "../storage/local-storage.js";
 import { AppError } from "../utils/app-error.js";
 import { extensionForMimeType } from "../utils/uploaded-file.js";
 
-export const UNLOADING_PDF_RENDERER_VERSION = "ba-unloading-native-v1";
+export const UNLOADING_PDF_RENDERER_VERSION = "ba-unloading-native-v2-signature-validity";
 export const UNLOADING_PDF_LAYOUT_SHA256 = createHash("sha256")
-  .update("ba-unloading-native-layout-v1")
+  .update("ba-unloading-native-layout-v2-signature-validity")
   .digest("hex");
 
 type SnapshotSignature = {
@@ -21,6 +21,8 @@ type SnapshotSignature = {
   signedAt: string | null;
   signatureMimeType: string | null;
   signatureChecksumSha256: string | null;
+  isSigned?: boolean;
+  signatureStatus?: "MISSING" | "UNSIGNED" | "INVALID_FILE" | "SIGNED";
 };
 
 type SnapshotAttachment = {
@@ -114,6 +116,11 @@ export type UnloadingPdfSnapshot = {
   loadingSignatures: SnapshotSignature[];
   unloadingSignatures: SnapshotSignature[];
   signatures: SnapshotSignature[];
+  signatureValidation?: {
+    isComplete: boolean;
+    incompleteRoles: SnapshotSignature["role"][];
+    roles?: Array<Record<string, unknown>>;
+  };
 };
 
 const PAGE = { width: 595.28, height: 841.89 };
@@ -167,8 +174,14 @@ function parseSnapshot(value: unknown): UnloadingPdfSnapshot {
   }
   for (const phase of [snapshot.loadingSignatures, snapshot.unloadingSignatures]) {
     const roles = new Set(phase.map((item) => item.role));
-    if (phase.length !== ROLE_ORDER.length || roles.size !== phase.length || ROLE_ORDER.some((role) => !roles.has(role))) {
-      throw new AppError(409, "Snapshot BA UNLOADING tidak mempunyai tepat tiga signature unik pada setiap phase");
+    if (roles.size !== phase.length || phase.some((item) => !ROLE_ORDER.includes(item.role))) {
+      throw new AppError(409, "Snapshot BA UNLOADING mempunyai signature role duplikat atau tidak didukung");
+    }
+  }
+  for (const [label, phase] of [["LOADING", snapshot.loadingSignatures], ["UNLOADING", snapshot.unloadingSignatures]] as const) {
+    const roles = new Set(phase.map((item) => item.role));
+    if (phase.length !== ROLE_ORDER.length || ROLE_ORDER.some((role) => !roles.has(role))) {
+      throw new AppError(409, `Snapshot BA UNLOADING tidak mempunyai tiga slot signature ${label} lengkap`);
     }
   }
   return snapshot as UnloadingPdfSnapshot;
@@ -358,8 +371,11 @@ async function embedImage(document: PDFDocument, key: string, mimeType: string, 
 async function renderSignature(document: PDFDocument, page: PDFPage, font: PDFFont, bold: PDFFont, signature: SnapshotSignature | undefined, label: string, x: number, y: number, width: number, height: number) {
   drawBoxText(page, font, bold, label, x, y + height - 21, width, 21, { bold: true, center: true, fill: COLORS.header, size: 6.7 });
   page.drawRectangle({ x, y, width, height: height - 21, color: COLORS.white, borderColor: COLORS.line, borderWidth: 0.55 });
-  if (!signature) {
-    page.drawText("Tidak tersedia", { x: x + 5, y: y + 55, size: 6.5, font, color: COLORS.muted });
+  if (!signature || signature.isSigned === false) {
+    const invalid = "BA TIDAK VALID";
+    const unsigned = "BELUM DITANDATANGANI";
+    page.drawText(invalid, { x: x + (width - bold.widthOfTextAtSize(invalid, 8)) / 2, y: y + 66, size: 8, font: bold, color: rgb(0.78, 0.04, 0.04) });
+    page.drawText(unsigned, { x: x + (width - bold.widthOfTextAtSize(unsigned, 6.2)) / 2, y: y + 52, size: 6.2, font: bold, color: rgb(0.78, 0.04, 0.04) });
     return;
   }
   const key = signatureStorageKey(signature);

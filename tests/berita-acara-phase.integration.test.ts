@@ -20,6 +20,8 @@ type SignatureResponse = {
   role: "CHIEF_OFFICER" | "SURVEYOR" | "TERMINAL_REPRESENTATIVE";
   name: string;
   signatureChecksumSha256: string | null;
+  isSigned?: boolean;
+  signatureStatus?: string;
 };
 type BaDocumentResponse = {
   id: string;
@@ -210,10 +212,65 @@ test("Berita Acara LOADING/UNLOADING mempunyai enam slot, otorisasi, file, final
     assert.equal(loadingChiefAgain.body.data.id, loadingSignatures[0]!.id);
     assert.equal(await prisma.reportSignature.count({ where: { sealingReportId: reportId, phase: "LOADING", role: "CHIEF_OFFICER" } }), 1);
 
+    const unsignedStatuses = await call<SignatureResponse[]>(`/shipments/${reportId}/ba/loading/signatures`);
+    assert.equal(unsignedStatuses.response.status, 200, JSON.stringify(unsignedStatuses.body));
+    assert.equal(unsignedStatuses.body.data.length, 3);
+    assert.equal(unsignedStatuses.body.data.every((signature) => signature.isSigned === false && signature.signatureStatus === "UNSIGNED"), true);
+    const finalizeWithMetadataOnly = await call<unknown>(`/shipments/${reportId}/ba/loading/finalize`, json("POST", {}));
+    assert.equal(finalizeWithMetadataOnly.response.status, 409);
+    assert.match(finalizeWithMetadataOnly.body.message, /Signature BA LOADING belum sah/);
+
+    const unsignedDraft = await call<{
+      checksumSha256: string;
+      documentStatus: string;
+      documentValidity: string;
+      signatureValidation: { isComplete: boolean; incompleteRoles: string[] };
+    }>(`/shipments/${reportId}/ba/loading/pdf`, json("POST", {}));
+    assert.equal(unsignedDraft.response.status, 201, JSON.stringify(unsignedDraft.body));
+    assert.equal(unsignedDraft.body.data.documentStatus, "DRAFT");
+    assert.equal(unsignedDraft.body.data.documentValidity, "INVALID_SIGNATURES");
+    assert.equal(unsignedDraft.body.data.signatureValidation.isComplete, false);
+    const unsignedDraftPreview = await fetch(`${api}/shipments/${reportId}/ba/loading/pdf/preview`, { headers: authorizationHeaders(loadingMaster.accessToken) });
+    assert.equal(unsignedDraftPreview.status, 200);
+    assert.equal(unsignedDraftPreview.headers.get("x-ba-document-status"), "DRAFT");
+    assert.equal(unsignedDraftPreview.headers.get("x-ba-document-validity"), "INVALID_SIGNATURES");
+    const unsignedDraftText = await pdfText(Buffer.from(await unsignedDraftPreview.arrayBuffer()));
+    assert.match(unsignedDraftText, /BA TIDAK VALID/);
+    assert.match(unsignedDraftText, /BELUM DITANDATANGANI/);
+
     const loadingBytes = await png(0x11);
-    const loadingUpload = await uploadSignature(loadingSignatures[0]!.id, loadingBytes, loadingMaster.accessToken);
-    assert.equal(loadingUpload.response.status, 200, JSON.stringify(loadingUpload.body));
-    storedFiles.push(`signature-loading-${loadingSignatures[0]!.id}.png`);
+    const loadingSignatureBytes = [loadingBytes, await png(0x12), await png(0x13)];
+    for (let index = 0; index < loadingSignatures.length; index += 1) {
+      const loadingUpload = await uploadSignature(loadingSignatures[index]!.id, loadingSignatureBytes[index]!, loadingMaster.accessToken);
+      assert.equal(loadingUpload.response.status, 200, JSON.stringify(loadingUpload.body));
+      assert.equal(loadingUpload.body.data.isSigned ?? true, true);
+      storedFiles.push(`signature-loading-${loadingSignatures[index]!.id}.png`);
+    }
+    const missingManagedFileKey = `signature-loading-${loadingSignatures[1]!.id}.png`;
+    await removeFile(missingManagedFileKey);
+    const invalidFileStatuses = await call<SignatureResponse[]>(`/shipments/${reportId}/ba/loading/signatures`);
+    const invalidSurveyor = invalidFileStatuses.body.data.find((signature) => signature.role === "SURVEYOR");
+    assert.equal(invalidSurveyor?.isSigned, false);
+    assert.equal(invalidSurveyor?.signatureStatus, "INVALID_FILE");
+    const finalizeWithMissingManagedFile = await call<unknown>(`/shipments/${reportId}/ba/loading/finalize`, json("POST", {}));
+    assert.equal(finalizeWithMissingManagedFile.response.status, 409);
+    const restoredSurveyor = await uploadSignature(loadingSignatures[1]!.id, loadingSignatureBytes[1]!, loadingMaster.accessToken);
+    assert.equal(restoredSurveyor.response.status, 200, JSON.stringify(restoredSurveyor.body));
+    const signedStatuses = await call<SignatureResponse[]>(`/shipments/${reportId}/ba/loading/signatures`);
+    assert.equal(signedStatuses.response.status, 200, JSON.stringify(signedStatuses.body));
+    assert.equal(signedStatuses.body.data.every((signature) => signature.isSigned === true && signature.signatureStatus === "SIGNED"), true);
+
+    const signedDraft = await call<{ documentStatus: string; documentValidity: string }>(
+      `/shipments/${reportId}/ba/loading/pdf`, json("POST", {}),
+    );
+    assert.equal(signedDraft.response.status, 201, JSON.stringify(signedDraft.body));
+    assert.equal(signedDraft.body.data.documentStatus, "DRAFT");
+    assert.equal(signedDraft.body.data.documentValidity, "VALID");
+    const signedDraftPreview = await fetch(`${api}/shipments/${reportId}/ba/loading/pdf/preview`, { headers: authorizationHeaders(loadingMaster.accessToken) });
+    assert.equal(signedDraftPreview.headers.get("x-ba-document-validity"), "VALID");
+    const signedDraftText = await pdfText(Buffer.from(await signedDraftPreview.arrayBuffer()));
+    assert.doesNotMatch(signedDraftText, /BA TIDAK VALID/);
+    for (const role of roles) assert.match(signedDraftText, new RegExp(role === "CHIEF_OFFICER" ? "Loading Chief Updated" : `Loading ${role}`));
 
     const concurrentLoadingFinalizations = await Promise.all([
       call<BaDocumentResponse>(`/reports/${reportId}/ba/loading/finalize`, json("POST", {})),
@@ -302,10 +359,16 @@ test("Berita Acara LOADING/UNLOADING mempunyai enam slot, otorisasi, file, final
       where: { id: reportId },
       data: { status: "SANDAR", sealingProcessStatus: "VERIFICATION", arrivedAt: new Date() },
     });
-    const beforeUnloadingFinal = await call<unknown>(
+    const beforeUnloadingFinal = await call<{ documentStatus: string; documentValidity: string }>(
       `/shipments/${reportId}/ba/unloading/pdf`, json("POST", {}), unloadingMaster.accessToken,
     );
-    assert.equal(beforeUnloadingFinal.response.status, 409);
+    assert.equal(beforeUnloadingFinal.response.status, 201, JSON.stringify(beforeUnloadingFinal.body));
+    assert.equal(beforeUnloadingFinal.body.data.documentStatus, "DRAFT");
+    assert.equal(beforeUnloadingFinal.body.data.documentValidity, "INVALID_SIGNATURES");
+    const unsignedUnloadingPreview = await fetch(`${api}/shipments/${reportId}/ba/unloading/pdf/preview`, { headers: authorizationHeaders(unloadingMaster.accessToken) });
+    assert.equal(unsignedUnloadingPreview.status, 200);
+    assert.equal(unsignedUnloadingPreview.headers.get("x-ba-document-validity"), "INVALID_SIGNATURES");
+    assert.match(await pdfText(Buffer.from(await unsignedUnloadingPreview.arrayBuffer())), /BA TIDAK VALID/);
     assert.equal((await call<unknown>(
       `/shipments/${reportId}/ba/unloading/pdf`, json("POST", {}), otherUnloadingMaster.accessToken,
     )).response.status, 403);
@@ -349,9 +412,18 @@ test("Berita Acara LOADING/UNLOADING mempunyai enam slot, otorisasi, file, final
     assert.match(legacyFinalBeforeUnloadingFinal.body.message, /BA UNLOADING/);
 
     const unloadingBytes = await png(0x22);
-    const unloadingUpload = await uploadSignature(unloadingSignatures[0]!.id, unloadingBytes, unloadingMaster.accessToken);
-    assert.equal(unloadingUpload.response.status, 200, JSON.stringify(unloadingUpload.body));
-    storedFiles.push(`signature-unloading-${unloadingSignatures[0]!.id}.png`);
+    const unloadingSignatureBytes = [unloadingBytes, await png(0x23), await png(0x24)];
+    for (let index = 0; index < unloadingSignatures.length; index += 1) {
+      const unloadingUpload = await uploadSignature(unloadingSignatures[index]!.id, unloadingSignatureBytes[index]!, unloadingMaster.accessToken);
+      assert.equal(unloadingUpload.response.status, 200, JSON.stringify(unloadingUpload.body));
+      storedFiles.push(`signature-unloading-${unloadingSignatures[index]!.id}.png`);
+    }
+    const signedUnloadingDraft = await call<{ documentStatus: string; documentValidity: string }>(
+      `/shipments/${reportId}/ba/unloading/pdf`, json("POST", {}), unloadingMaster.accessToken,
+    );
+    assert.equal(signedUnloadingDraft.response.status, 201, JSON.stringify(signedUnloadingDraft.body));
+    assert.equal(signedUnloadingDraft.body.data.documentStatus, "DRAFT");
+    assert.equal(signedUnloadingDraft.body.data.documentValidity, "VALID");
     const loadingPreview = await fetch(`${api}/signatures/${loadingSignatures[0]!.id}/preview`, { headers: authorizationHeaders(loadingMaster.accessToken) });
     const unloadingPreview = await fetch(`${api}/signatures/${unloadingSignatures[0]!.id}/preview`, { headers: authorizationHeaders(unloadingMaster.accessToken) });
     assert.equal(loadingPreview.status, 200);

@@ -4,8 +4,20 @@ import path from "node:path";
 
 import { env } from "../config/env.js";
 import { prisma } from "../config/prisma.js";
-import type { Prisma, UserRole } from "../generated/prisma/client.js";
+import type {
+  Attachment,
+  BeritaAcaraDocument,
+  BeritaAcaraPdfArtifact,
+  Prisma,
+  ReportSignature,
+  Seal,
+  SealingRecord,
+  SealingReport,
+  SealVerification,
+  UserRole,
+} from "../generated/prisma/client.js";
 import { AppError } from "../utils/app-error.js";
+import { evaluateSignatureRoles, REQUIRED_SIGNATURE_ROLES } from "./signature-status.service.js";
 import {
   buildUnloadingBaPdf,
   UNLOADING_PDF_LAYOUT_SHA256,
@@ -108,6 +120,9 @@ function artifactDetails(artifact: Artifact, reportId: string, phase: "LOADING" 
     checksumSha256: artifact.checksumSha256,
     snapshotChecksumSha256: artifact.snapshotChecksumSha256,
     rendererVersion: artifact.rendererVersion,
+    documentStatus: details.documentStatus ?? null,
+    documentValidity: details.documentValidity ?? null,
+    signatureValidation: details.signatureValidation ?? null,
     templateChecksumSha256: details.templateChecksumSha256 ?? null,
     formPageCount: details.formPageCount ?? null,
     appendixPageCount: details.appendixPageCount ?? null,
@@ -124,23 +139,488 @@ function artifactDetails(artifact: Artifact, reportId: string, phase: "LOADING" 
   };
 }
 
-async function loadUnloadingDocument(reportId: string, actor: BaPdfActor) {
-  const report = await prisma.sealingReport.findUnique({
-    where: { id: reportId },
+const unloadingAttachmentSelect = {
+  id: true, ownerType: true, type: true, sectionCode: true, compartmentId: true,
+  vesselSealingPointId: true, caption: true, sequence: true, fileName: true,
+  fileUrl: true, mimeType: true, fileSize: true, checksumSha256: true,
+  uploadedById: true, createdAt: true,
+} satisfies Prisma.AttachmentSelect;
+
+const unloadingPdfReportSelect = {
+  id: true,
+  reportNo: true,
+  shipmentNumber: true,
+  voyageNumber: true,
+  unloadingMasterId: true,
+  status: true,
+  sealingRecords: {
     select: {
-      id: true, reportNo: true, shipmentNumber: true, voyageNumber: true,
-      unloadingMasterId: true,
-      baDocuments: { where: { phase: "UNLOADING" }, include: { pdfArtifact: true } },
+      id: true,
+      vesselSealingPointId: true,
+      status: true,
+      seals: {
+        select: {
+          id: true,
+          sealNumber: true,
+          status: true,
+          verifications: {
+            select: {
+              id: true,
+              condition: true,
+              verifiedAt: true,
+              remarks: true,
+              verifiedById: true,
+              attachments: { select: unloadingAttachmentSelect, orderBy: [{ sequence: "asc" as const }, { createdAt: "asc" as const }] },
+            },
+            orderBy: [{ verifiedAt: "asc" as const }, { id: "asc" as const }],
+          },
+        },
+      },
     },
+  },
+  signatures: { where: { phase: "UNLOADING" as const }, orderBy: { role: "asc" as const } },
+  baDocuments: { include: { pdfArtifact: true } },
+} as const satisfies Prisma.SealingReportSelect;
+
+type UnloadingAttachment = Pick<Attachment,
+  "id" | "ownerType" | "type" | "sectionCode" | "compartmentId" | "vesselSealingPointId" |
+  "caption" | "sequence" | "fileName" | "fileUrl" | "mimeType" | "fileSize" |
+  "checksumSha256" | "uploadedById" | "createdAt">;
+type UnloadingVerification = Pick<SealVerification, "id" | "condition" | "verifiedAt" | "remarks" | "verifiedById"> & {
+  attachments: UnloadingAttachment[];
+};
+type UnloadingSeal = Pick<Seal, "id" | "sealNumber" | "status"> & { verifications: UnloadingVerification[] };
+type UnloadingRecord = Pick<SealingRecord, "id" | "vesselSealingPointId" | "status"> & { seals: UnloadingSeal[] };
+type UnloadingDocument = BeritaAcaraDocument & { pdfArtifact: BeritaAcaraPdfArtifact | null };
+type UnloadingPdfReport = Pick<SealingReport,
+  "id" | "reportNo" | "shipmentNumber" | "voyageNumber" | "unloadingMasterId" | "status"> & {
+  sealingRecords: UnloadingRecord[];
+  signatures: ReportSignature[];
+  baDocuments: UnloadingDocument[];
+};
+type UnloadingPdfClient = Pick<typeof prisma, "sealingReport">;
+type DraftLoadingAttachment = {
+  id: string;
+  ownerType?: string | null;
+  type?: string | null;
+  sectionCode?: string | null;
+  compartmentId?: string | null;
+  vesselSealingPointId?: string | null;
+  caption?: string | null;
+  sequence?: number | null;
+  fileName: string;
+  fileUrl?: string | null;
+  mimeType: string;
+  fileSize?: string | null;
+  checksumSha256?: string | null;
+  uploadedById?: string | null;
+  createdAt?: string | null;
+};
+type DraftLoadingRecord = Omit<PdfFinalSnapshot["records"][number], "attachments" | "seals"> & {
+  id: string;
+  attachments?: DraftLoadingAttachment[];
+  seals: Array<PdfFinalSnapshot["records"][number]["seals"][number] & { id: string }>;
+};
+type DraftLoadingSnapshot = Omit<PdfFinalSnapshot, "attachments" | "records"> & {
+  attachments?: DraftLoadingAttachment[];
+  records: DraftLoadingRecord[];
+};
+
+function buildLoadingAttachmentProvenance(attachment: DraftLoadingAttachment, sealingRecordId: string | null) {
+  return {
+    ...attachment,
+    phase: "LOADING",
+    sealingRecordId,
+    sealId: null,
+    verificationId: null,
+    uploadedAt: attachment.createdAt ?? null,
+    provenance: {
+      phase: "LOADING",
+      ownerType: attachment.ownerType ?? (sealingRecordId ? "SEALING_RECORD" : "REPORT"),
+      sealingRecordId,
+      sealId: null,
+      verificationId: null,
+      uploadedAt: attachment.createdAt ?? null,
+      uploadedById: attachment.uploadedById ?? null,
+    },
+  };
+}
+
+async function buildUnloadingDraftSnapshot(report: UnloadingPdfReport, document: UnloadingPdfReport["baDocuments"][number]) {
+  if (report.status !== "SANDAR") throw new AppError(409, "Draft PDF BA UNLOADING hanya tersedia ketika shipment SANDAR");
+  const loadingDocument = report.baDocuments.find((item) => item.phase === "LOADING");
+  if (!loadingDocument || loadingDocument.status !== "FINALIZED" || !loadingDocument.snapshot || !loadingDocument.finalizedAt) {
+    throw new AppError(409, "BA LOADING harus difinalisasi sebelum draft PDF BA UNLOADING dibuat");
+  }
+  const loadingSnapshot = parseLoadingSnapshot(loadingDocument.snapshot) as unknown as DraftLoadingSnapshot;
+  const signatureValidation = await evaluateSignatureRoles(report.signatures, "UNLOADING");
+  const statusById = new Map(signatureValidation.roles.filter((item) => item.signatureId).map((item) => [item.signatureId, item]));
+  const currentSeals = new Map(report.sealingRecords.flatMap((record) => record.seals.map((seal) => [seal.id, {
+    ...seal,
+    sealingRecordId: record.id,
+    vesselSealingPointId: record.vesselSealingPointId,
+  }] as const)));
+  const activeLoadingSeals = loadingSnapshot.records.flatMap((record) => record.seals
+    .filter((seal) => !["REMOVED", "REPLACED"].includes(seal.status))
+    .map((seal) => ({ ...seal, sealingRecordId: record.id, vesselSealingPointId: record.vesselSealingPointId })));
+
+  const loadingAttachments = [
+    ...(loadingSnapshot.attachments ?? []).map((attachment) => buildLoadingAttachmentProvenance(attachment, null)),
+    ...loadingSnapshot.records.flatMap((record) =>
+      (record.attachments ?? []).map((attachment) => buildLoadingAttachmentProvenance(attachment, record.id))),
+  ];
+  const uniqueLoadingAttachments = [...new Map(loadingAttachments.map((attachment) => [attachment.id, attachment])).values()];
+  const unloadingAttachments = activeLoadingSeals.flatMap((loadingSeal) => {
+    const current = currentSeals.get(loadingSeal.id);
+    if (!current || current.sealNumber !== loadingSeal.sealNumber) return [];
+    return current.verifications.flatMap((verification) => verification.attachments.map((attachment) => ({
+      ...attachment,
+      fileSize: attachment.fileSize?.toString() ?? null,
+      createdAt: attachment.createdAt.toISOString(),
+      phase: "UNLOADING",
+      sealingRecordId: loadingSeal.sealingRecordId,
+      sealId: loadingSeal.id,
+      verificationId: verification.id,
+      uploadedAt: attachment.createdAt.toISOString(),
+      provenance: {
+        phase: "UNLOADING",
+        ownerType: "VERIFICATION",
+        sealingRecordId: loadingSeal.sealingRecordId,
+        sealId: loadingSeal.id,
+        verificationId: verification.id,
+        uploadedAt: attachment.createdAt.toISOString(),
+        uploadedById: attachment.uploadedById,
+      },
+    })));
   });
+  const uniqueUnloadingAttachments = [...new Map(unloadingAttachments.map((attachment) => [attachment.id, attachment])).values()];
+  const records = loadingSnapshot.records.map((record) => ({
+    ...record,
+    attachments: (record.attachments ?? []).map((attachment) => buildLoadingAttachmentProvenance(attachment, record.id)),
+    seals: record.seals
+      .filter((seal) => !["REMOVED", "REPLACED"].includes(seal.status))
+      .map((seal) => {
+        const current = currentSeals.get(seal.id);
+        return {
+          ...seal,
+          loadingStatus: seal.status,
+          unloadingStatus: current?.status ?? "NOT_VERIFIED",
+          verifications: (current?.verifications ?? []).map((verification) => ({
+            id: verification.id,
+            condition: verification.condition,
+            verifiedAt: verification.verifiedAt.toISOString(),
+            remarks: verification.remarks,
+            verifiedById: verification.verifiedById,
+            attachments: verification.attachments.map((attachment) =>
+              uniqueUnloadingAttachments.find((item) => item.id === attachment.id)).filter((item) => item !== undefined),
+          })),
+        };
+      }),
+  }));
+  const unloadingSignatures = REQUIRED_SIGNATURE_ROLES.map((role) => {
+    const signature = report.signatures.find((item) => item.role === role);
+    if (!signature) {
+      return {
+        id: `missing-unloading-${role.toLowerCase()}`,
+        phase: "UNLOADING" as const,
+        role,
+        name: "",
+        signedAt: null,
+        signatureMimeType: null,
+        signatureChecksumSha256: null,
+        isSigned: false,
+        signatureStatus: "MISSING" as const,
+      };
+    }
+    return {
+      id: signature.id,
+      phase: "UNLOADING" as const,
+      role: signature.role,
+      name: signature.name,
+      signedAt: signature.signedAt?.toISOString() ?? null,
+      signatureMimeType: signature.signatureMimeType,
+      signatureChecksumSha256: signature.signatureChecksumSha256,
+      isSigned: statusById.get(signature.id)?.isSigned ?? false,
+      signatureStatus: statusById.get(signature.id)?.state ?? "UNSIGNED" as const,
+    };
+  });
+  const loadingSignatures = loadingSnapshot.signatures
+    .filter((signature) => signature.phase === "LOADING")
+    .map((signature) => ({ ...signature, phase: "LOADING" as const, isSigned: signature.isSigned ?? true }));
+  return {
+    schemaVersion: 1,
+    documentType: "BERITA_ACARA" as const,
+    phase: "UNLOADING" as const,
+    capturedAt: document.createdAt.toISOString(),
+    finalizedById: null,
+    loadingSnapshotReference: {
+      baDocumentId: loadingDocument.id,
+      snapshotVersion: loadingDocument.snapshotVersion,
+      finalizedAt: loadingDocument.finalizedAt.toISOString(),
+      snapshotChecksumSha256: hash(canonicalJson(loadingSnapshot)),
+    },
+    report: loadingSnapshot.report,
+    formConfigurationSnapshot: loadingSnapshot.formConfigurationSnapshot,
+    records,
+    loadingAttachments: uniqueLoadingAttachments,
+    unloadingAttachments: uniqueUnloadingAttachments,
+    loadingSignatures,
+    unloadingSignatures,
+    signatures: [...loadingSignatures, ...unloadingSignatures],
+    signatureValidation: {
+      isComplete: signatureValidation.isComplete,
+      roles: signatureValidation.roles,
+      incompleteRoles: signatureValidation.incompleteRoles,
+    },
+    verificationSummary: {
+      activeSealCount: activeLoadingSeals.length,
+      verifiedSealCount: activeLoadingSeals.filter((seal) => (currentSeals.get(seal.id)?.verifications.length ?? 0) > 0).length,
+      unloadingAttachmentCount: uniqueUnloadingAttachments.length,
+    },
+  } as unknown as UnloadingPdfSnapshot & Record<string, unknown>;
+}
+
+async function ensureUnloadingDocument(reportId: string, actor: BaPdfActor) {
+  return prisma.$transaction(async (rawTransaction) => {
+    const tx = rawTransaction as unknown as Pick<typeof prisma, "$queryRawUnsafe" | "sealingReport" | "beritaAcaraDocument">;
+    await tx.$queryRawUnsafe('SELECT "id" FROM "sealing_report" WHERE "id" = $1 FOR UPDATE', reportId);
+    const report = await tx.sealingReport.findUnique({
+      where: { id: reportId },
+      select: {
+        id: true,
+        shipmentNumber: true,
+        unloadingMasterId: true,
+        status: true,
+        baDocuments: { where: { phase: "LOADING" }, select: { status: true, snapshot: true }, take: 1 },
+      },
+    });
+    if (!report) throw new AppError(404, "Shipment/voyage tidak ditemukan");
+    if (!report.shipmentNumber) throw new AppError(400, "PDF BA UNLOADING hanya tersedia untuk shipment/voyage canonical");
+    assertUnloadingAccess(report, actor);
+    const existing = await tx.beritaAcaraDocument.findUnique({
+      where: { sealingReportId_phase: { sealingReportId: reportId, phase: "UNLOADING" } },
+      select: { id: true },
+    });
+    if (existing) return existing.id;
+    if (report.status !== "SANDAR") throw new AppError(409, "Draft PDF BA UNLOADING hanya tersedia ketika shipment SANDAR");
+    const loadingDocument = report.baDocuments[0];
+    if (!loadingDocument || loadingDocument.status !== "FINALIZED" || !loadingDocument.snapshot) {
+      throw new AppError(409, "BA LOADING harus difinalisasi sebelum draft PDF BA UNLOADING dibuat");
+    }
+    const created = await tx.beritaAcaraDocument.create({
+      data: { id: randomUUID(), sealingReportId: reportId, phase: "UNLOADING" },
+      select: { id: true },
+    });
+    return created.id;
+  });
+}
+
+async function loadUnloadingDocument(reportId: string, actor: BaPdfActor, database: UnloadingPdfClient = prisma) {
+  const report = await database.sealingReport.findUnique({
+    where: { id: reportId },
+    select: unloadingPdfReportSelect,
+  }) as unknown as UnloadingPdfReport | null;
   if (!report) throw new AppError(404, "Shipment/voyage tidak ditemukan");
   if (!report.shipmentNumber) throw new AppError(400, "PDF BA UNLOADING hanya tersedia untuk shipment/voyage canonical");
   assertUnloadingAccess(report, actor);
-  const document = report.baDocuments[0];
-  if (!document || document.status !== "FINALIZED" || !document.snapshot) {
-    throw new AppError(409, "BA UNLOADING harus difinalisasi sebelum PDF dibuat atau dibaca");
+  const document = report.baDocuments.find((item) => item.phase === "UNLOADING");
+  if (!document) throw new AppError(404, "Dokumen BA UNLOADING belum dibuat; panggil endpoint generate terlebih dahulu");
+  if (document.status === "FINALIZED") {
+    if (!document.snapshot) throw new AppError(409, "Snapshot BA UNLOADING final tidak tersedia");
+    return { report, document, snapshot: parseUnloadingSnapshot(document.snapshot), documentValidity: "VALID" as const };
   }
-  return { report, document, snapshot: parseUnloadingSnapshot(document.snapshot) };
+  const snapshot = await buildUnloadingDraftSnapshot(report, document);
+  return {
+    report,
+    document,
+    snapshot,
+    documentValidity: snapshot.signatureValidation?.isComplete ? "VALID" as const : "INVALID_SIGNATURES" as const,
+  };
+}
+
+const loadingPdfReportSelect = {
+  id: true,
+  reportNo: true,
+  shipmentNumber: true,
+  voyageNumber: true,
+  createdById: true,
+  loadingMasterId: true,
+  unloadingMasterId: true,
+  reportDateTime: true,
+  status: true,
+  sealingStatus: true,
+  sealingProcessStatus: true,
+  departedAt: true,
+  arrivedAt: true,
+  finishedAt: true,
+  remarks: true,
+  vessel: { select: { id: true, name: true, imoNumber: true } },
+  activity: { select: { id: true, code: true, name: true } },
+  product: { select: { id: true, name: true } },
+  shipmentProducts: {
+    select: { sequence: true, product: { select: { id: true, name: true } } },
+    orderBy: { sequence: "asc" as const },
+  },
+  loadingPlant: { select: { id: true, code: true, name: true } },
+  loadingJetty: { select: { id: true, name: true } },
+  dischargePlant: { select: { id: true, code: true, name: true } },
+  dischargeJetty: { select: { id: true, name: true } },
+  loadingMaster: { select: { id: true, fullName: true, role: true } },
+  unloadingMaster: { select: { id: true, fullName: true, role: true } },
+  formConfigurationSnapshot: true,
+  attachments: {
+    select: {
+      id: true, ownerType: true, type: true, sectionCode: true, compartmentId: true,
+      vesselSealingPointId: true, caption: true, sequence: true, fileName: true,
+      fileUrl: true, mimeType: true, fileSize: true, checksumSha256: true,
+      uploadedById: true, createdAt: true,
+    },
+    orderBy: [{ sequence: "asc" as const }, { createdAt: "asc" as const }],
+  },
+  sealingRecords: {
+    select: {
+      id: true, vesselSealingPointId: true, pointSnapshot: true, status: true, notes: true,
+      attachments: {
+        select: {
+          id: true, ownerType: true, type: true, sectionCode: true, compartmentId: true,
+          vesselSealingPointId: true, caption: true, sequence: true, fileName: true,
+          fileUrl: true, mimeType: true, fileSize: true, checksumSha256: true,
+          uploadedById: true, createdAt: true,
+        },
+        orderBy: [{ sequence: "asc" as const }, { createdAt: "asc" as const }],
+      },
+      seals: {
+        select: {
+          id: true, sealNumber: true, status: true, installedAt: true, removedAt: true, notes: true,
+          verifications: true,
+        },
+        orderBy: { createdAt: "asc" as const },
+      },
+    },
+    orderBy: { createdAt: "asc" as const },
+  },
+  signatures: {
+    where: { phase: "LOADING" as const },
+    orderBy: { role: "asc" as const },
+  },
+  baDocuments: {
+    where: { phase: "LOADING" as const },
+    include: { pdfArtifact: true },
+    take: 1,
+  },
+} satisfies Prisma.SealingReportSelect;
+
+type LoadingPdfReport = Prisma.SealingReportGetPayload<{ select: typeof loadingPdfReportSelect }>;
+type LoadingPdfClient = Pick<typeof prisma, "sealingReport">;
+
+async function buildLoadingDraftSnapshot(report: LoadingPdfReport, document: LoadingPdfReport["baDocuments"][number]) {
+  if (report.status !== "DRAFT") throw new AppError(409, "Draft PDF BA LOADING hanya tersedia ketika shipment masih DRAFT");
+  const configuration = report.formConfigurationSnapshot;
+  if (!configuration || typeof configuration !== "object" || Array.isArray(configuration) ||
+      !Array.isArray((configuration as Record<string, unknown>).points)) {
+    throw new AppError(409, "Form A-H harus diinisialisasi sebelum draft PDF BA LOADING dicetak");
+  }
+  const validation = await evaluateSignatureRoles(report.signatures, "LOADING");
+  const statusById = new Map(validation.roles.filter((item) => item.signatureId).map((item) => [item.signatureId, item]));
+  const snapshotAttachment = (attachment: LoadingPdfReport["attachments"][number]) => ({
+    ...attachment,
+    fileSize: attachment.fileSize?.toString() ?? null,
+  });
+  return {
+    schemaVersion: 1,
+    documentType: "BERITA_ACARA" as const,
+    phase: "LOADING" as const,
+    capturedAt: document.createdAt.toISOString(),
+    finalizedById: null,
+    report: {
+      id: report.id,
+      reportNo: report.reportNo,
+      shipmentNumber: report.shipmentNumber,
+      voyageNumber: report.voyageNumber,
+      reportDateTime: report.reportDateTime.toISOString(),
+      journeyStatus: report.status,
+      sealingStatus: report.sealingStatus,
+      sealingProcessStatus: report.sealingProcessStatus,
+      departedAt: report.departedAt,
+      arrivedAt: report.arrivedAt,
+      finishedAt: report.finishedAt,
+      remarks: report.remarks,
+      vessel: report.vessel,
+      activity: report.activity,
+      product: report.shipmentProducts[0]?.product ?? report.product,
+      products: report.shipmentProducts.length > 0
+        ? report.shipmentProducts.map((item: LoadingPdfReport["shipmentProducts"][number]) => item.product)
+        : (report.product ? [report.product] : []),
+      loadingPlant: report.loadingPlant,
+      loadingJetty: report.loadingJetty,
+      dischargePlant: report.dischargePlant,
+      dischargeJetty: report.dischargeJetty,
+      loadingMaster: report.loadingMaster,
+      unloadingMaster: report.unloadingMaster,
+    },
+    formConfigurationSnapshot: configuration as PdfFinalSnapshot["formConfigurationSnapshot"],
+    attachments: report.attachments.map(snapshotAttachment),
+    records: report.sealingRecords.map((record: LoadingPdfReport["sealingRecords"][number]) => ({
+      id: record.id,
+      vesselSealingPointId: record.vesselSealingPointId,
+      pointSnapshot: record.pointSnapshot,
+      status: record.status,
+      notes: record.notes,
+      attachments: record.attachments.map((attachment: LoadingPdfReport["sealingRecords"][number]["attachments"][number]) => snapshotAttachment(attachment)),
+      seals: record.seals
+        .filter((seal: LoadingPdfReport["sealingRecords"][number]["seals"][number]) => !["REMOVED", "REPLACED"].includes(seal.status))
+        .map((seal: LoadingPdfReport["sealingRecords"][number]["seals"][number]) => ({
+          id: seal.id,
+          sealNumber: seal.sealNumber,
+          status: seal.status,
+          installedAt: seal.installedAt,
+          removedAt: seal.removedAt,
+          notes: seal.notes,
+          verifications: seal.verifications,
+        })),
+    })) as PdfFinalSnapshot["records"],
+    signatures: report.signatures.map((signature: LoadingPdfReport["signatures"][number]) => ({
+      id: signature.id,
+      phase: signature.phase,
+      role: signature.role,
+      name: signature.name,
+      signedAt: signature.signedAt?.toISOString() ?? null,
+      signatureMimeType: signature.signatureMimeType,
+      signatureChecksumSha256: signature.signatureChecksumSha256,
+      isSigned: statusById.get(signature.id)?.isSigned ?? false,
+      signatureStatus: statusById.get(signature.id)?.state ?? "UNSIGNED",
+    })),
+    signatureValidation: {
+      isComplete: validation.isComplete,
+      roles: validation.roles,
+      incompleteRoles: validation.incompleteRoles,
+    },
+  } satisfies PdfFinalSnapshot & Record<string, unknown>;
+}
+
+async function ensureLoadingDocument(reportId: string, actor: BaPdfActor) {
+  return prisma.$transaction(async (rawTransaction) => {
+    const tx = rawTransaction as unknown as Pick<typeof prisma, "$queryRawUnsafe" | "sealingReport" | "beritaAcaraDocument">;
+    await tx.$queryRawUnsafe('SELECT "id" FROM "sealing_report" WHERE "id" = $1 FOR UPDATE', reportId);
+    const report = await tx.sealingReport.findUnique({
+      where: { id: reportId },
+      select: { id: true, shipmentNumber: true, createdById: true, loadingMasterId: true, status: true },
+    });
+    if (!report) throw new AppError(404, "Shipment/voyage tidak ditemukan");
+    if (!report.shipmentNumber) throw new AppError(400, "PDF BA LOADING hanya tersedia untuk shipment/voyage canonical");
+    assertLoadingAccess(report, actor);
+    const existing = await tx.beritaAcaraDocument.findUnique({
+      where: { sealingReportId_phase: { sealingReportId: reportId, phase: "LOADING" } },
+      select: { id: true },
+    });
+    if (existing) return existing.id;
+    if (report.status !== "DRAFT") throw new AppError(409, "Draft PDF BA LOADING hanya tersedia ketika shipment masih DRAFT");
+    const created = await tx.beritaAcaraDocument.create({
+      data: { id: randomUUID(), sealingReportId: reportId, phase: "LOADING" },
+      select: { id: true },
+    });
+    return created.id;
+  });
 }
 
 async function verifiedArtifactFile(artifact: Artifact) {
@@ -157,26 +637,28 @@ async function verifiedArtifactFile(artifact: Artifact) {
   return absolutePath;
 }
 
-async function loadLoadingDocument(reportId: string, actor: BaPdfActor) {
-  const report = await prisma.sealingReport.findUnique({
-    where: { id: reportId },
-    select: {
-      id: true, reportNo: true, shipmentNumber: true, voyageNumber: true,
-      createdById: true, loadingMasterId: true,
-      baDocuments: { where: { phase: "LOADING" }, include: { pdfArtifact: true } },
-    },
-  });
+async function loadLoadingDocument(reportId: string, actor: BaPdfActor, database: LoadingPdfClient = prisma) {
+  const report = await database.sealingReport.findUnique({ where: { id: reportId }, select: loadingPdfReportSelect });
   if (!report) throw new AppError(404, "Shipment/voyage tidak ditemukan");
   if (!report.shipmentNumber) throw new AppError(400, "PDF BA LOADING hanya tersedia untuk shipment/voyage canonical");
   assertLoadingAccess(report, actor);
   const document = report.baDocuments[0];
-  if (!document || document.status !== "FINALIZED" || !document.snapshot) {
-    throw new AppError(409, "BA LOADING harus difinalisasi sebelum PDF dibuat atau dibaca");
+  if (!document) throw new AppError(404, "Dokumen BA LOADING belum dibuat; panggil endpoint generate terlebih dahulu");
+  if (document.status === "FINALIZED") {
+    if (!document.snapshot) throw new AppError(409, "Snapshot BA LOADING final tidak tersedia");
+    return { report, document, snapshot: parseLoadingSnapshot(document.snapshot), documentValidity: "VALID" as const };
   }
-  return { report, document, snapshot: parseLoadingSnapshot(document.snapshot) };
+  const snapshot = await buildLoadingDraftSnapshot(report, document);
+  return {
+    report,
+    document,
+    snapshot,
+    documentValidity: snapshot.signatureValidation?.isComplete ? "VALID" as const : "INVALID_SIGNATURES" as const,
+  };
 }
 
 export async function generateLoadingBaPdf(reportId: string, actor: BaPdfActor) {
+  await ensureLoadingDocument(reportId, actor);
   const initial = await loadLoadingDocument(reportId, actor);
   const snapshotChecksumSha256 = hash(canonicalJson(initial.snapshot));
   if (initial.document.pdfArtifact &&
@@ -194,14 +676,10 @@ export async function generateLoadingBaPdf(reportId: string, actor: BaPdfActor) 
   let ownsDestination = false;
   try {
     const result = await prisma.$transaction(async (rawTransaction) => {
-      const tx = rawTransaction as unknown as Pick<typeof prisma, "$queryRawUnsafe" | "beritaAcaraDocument" | "beritaAcaraPdfArtifact" | "auditLog">;
+      const tx = rawTransaction as unknown as Pick<typeof prisma, "$queryRawUnsafe" | "sealingReport" | "beritaAcaraDocument" | "beritaAcaraPdfArtifact" | "auditLog">;
       await tx.$queryRawUnsafe('SELECT "id" FROM "sealing_report" WHERE "id" = $1 FOR UPDATE', reportId);
-      const document = await tx.beritaAcaraDocument.findUnique({
-        where: { sealingReportId_phase: { sealingReportId: reportId, phase: "LOADING" } },
-        include: { pdfArtifact: true },
-      });
-      if (!document || document.status !== "FINALIZED" || !document.snapshot) throw new AppError(409, "BA LOADING belum difinalisasi");
-      const snapshot = parseLoadingSnapshot(document.snapshot);
+      const current = await loadLoadingDocument(reportId, actor, tx);
+      const { document, snapshot } = current;
       const currentSnapshotChecksum = hash(canonicalJson(snapshot));
       const existing = document.pdfArtifact;
       if (existing && existing.rendererVersion === PDF_RENDERER_VERSION && existing.snapshotChecksumSha256 === currentSnapshotChecksum) {
@@ -223,6 +701,9 @@ export async function generateLoadingBaPdf(reportId: string, actor: BaPdfActor) 
         ownsDestination = true;
         const metadata = {
           phase: "LOADING",
+          documentStatus: document.status,
+          documentValidity: current.documentValidity,
+          signatureValidation: snapshot.signatureValidation ?? null,
           templateChecksumSha256: NATIVE_PDF_LAYOUT_SHA256,
           formPageCount: generated.formPageCount,
           appendixPageCount: generated.appendixPageCount,
@@ -256,6 +737,8 @@ export async function generateLoadingBaPdf(reportId: string, actor: BaPdfActor) 
               checksumSha256: saved.checksumSha256,
               snapshotChecksumSha256: saved.snapshotChecksumSha256,
               rendererVersion: saved.rendererVersion,
+              documentStatus: document.status,
+              documentValidity: current.documentValidity,
             },
           },
         });
@@ -289,6 +772,7 @@ export async function getLoadingBaPdfFile(reportId: string, actor: BaPdfActor) {
 }
 
 export async function generateUnloadingBaPdf(reportId: string, actor: BaPdfActor) {
+  await ensureUnloadingDocument(reportId, actor);
   const initial = await loadUnloadingDocument(reportId, actor);
   const snapshotChecksumSha256 = hash(canonicalJson(initial.snapshot));
   if (initial.document.pdfArtifact &&
@@ -306,14 +790,10 @@ export async function generateUnloadingBaPdf(reportId: string, actor: BaPdfActor
   let ownsDestination = false;
   try {
     const result = await prisma.$transaction(async (rawTransaction) => {
-      const tx = rawTransaction as unknown as Pick<typeof prisma, "$queryRawUnsafe" | "beritaAcaraDocument" | "beritaAcaraPdfArtifact" | "auditLog">;
+      const tx = rawTransaction as unknown as Pick<typeof prisma, "$queryRawUnsafe" | "sealingReport" | "beritaAcaraPdfArtifact" | "auditLog">;
       await tx.$queryRawUnsafe('SELECT "id" FROM "sealing_report" WHERE "id" = $1 FOR UPDATE', reportId);
-      const document = await tx.beritaAcaraDocument.findUnique({
-        where: { sealingReportId_phase: { sealingReportId: reportId, phase: "UNLOADING" } },
-        include: { pdfArtifact: true },
-      });
-      if (!document || document.status !== "FINALIZED" || !document.snapshot) throw new AppError(409, "BA UNLOADING belum difinalisasi");
-      const snapshot = parseUnloadingSnapshot(document.snapshot);
+      const current = await loadUnloadingDocument(reportId, actor, tx);
+      const { document, snapshot } = current;
       const currentSnapshotChecksum = hash(canonicalJson(snapshot));
       const existing = document.pdfArtifact;
       if (existing && existing.rendererVersion === UNLOADING_PDF_RENDERER_VERSION && existing.snapshotChecksumSha256 === currentSnapshotChecksum) {
@@ -335,6 +815,9 @@ export async function generateUnloadingBaPdf(reportId: string, actor: BaPdfActor
         ownsDestination = true;
         const metadata = {
           phase: "UNLOADING",
+          documentStatus: document.status,
+          documentValidity: current.documentValidity,
+          signatureValidation: snapshot.signatureValidation ?? null,
           templateChecksumSha256: UNLOADING_PDF_LAYOUT_SHA256,
           formPageCount: generated.formPageCount,
           appendixPageCount: generated.appendixPageCount,
@@ -373,6 +856,8 @@ export async function generateUnloadingBaPdf(reportId: string, actor: BaPdfActor
               checksumSha256: saved.checksumSha256,
               snapshotChecksumSha256: saved.snapshotChecksumSha256,
               rendererVersion: saved.rendererVersion,
+              documentStatus: document.status,
+              documentValidity: current.documentValidity,
               pageCount: generated.pageCount,
               loadingAppendixPageCount: generated.loadingAppendixPageCount,
               unloadingAppendixPageCount: generated.unloadingAppendixPageCount,

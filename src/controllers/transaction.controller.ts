@@ -85,6 +85,8 @@ const sendLoadingBaPdf = (disposition: "inline" | "attachment") => async (req: R
     "Cache-Control": "private, no-store",
     "X-Content-Type-Options": "nosniff",
     "X-Checksum-SHA256": file.metadata.checksumSha256,
+    "X-BA-Document-Status": String(file.metadata.documentStatus ?? "UNKNOWN"),
+    "X-BA-Document-Validity": String(file.metadata.documentValidity ?? "UNKNOWN"),
   } }, (error) => { if (error) next(error); });
 };
 export const previewLoadingBaPdf = sendLoadingBaPdf("inline");
@@ -104,6 +106,8 @@ const sendUnloadingBaPdf = (disposition: "inline" | "attachment") => async (req:
     "Cache-Control": "private, no-store",
     "X-Content-Type-Options": "nosniff",
     "X-Checksum-SHA256": file.metadata.checksumSha256,
+    "X-BA-Document-Status": String(file.metadata.documentStatus ?? "UNKNOWN"),
+    "X-BA-Document-Validity": String(file.metadata.documentValidity ?? "UNKNOWN"),
   } }, (error) => { if (error) next(error); });
 };
 export const previewUnloadingBaPdf = sendUnloadingBaPdf("inline");

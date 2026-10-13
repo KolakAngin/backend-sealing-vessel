@@ -6,9 +6,11 @@
 
 Generator membuat seluruh halaman form secara native dengan `pdf-lib`. Tidak ada halaman PDF sumber yang disalin, ditanam, dijadikan background, atau ditutupi dengan kotak putih. Header, identitas dokumen, paragraf, tabel A–H, nomor segel, status, area tanda tangan, footer, dan appendix digambar sebagai teks, garis, bentuk vektor, dan gambar data aktual.
 
+Untuk endpoint BA phase-aware, PDF `DRAFT` dapat dibuat sebelum signature lengkap. Sebuah signature hanya dianggap sah bila `signedAt`, metadata file, file fisik, ukuran, dan SHA-256 valid. Slot `MISSING`, `UNSIGNED`, atau `INVALID_FILE` tidak merender nama/file dan menampilkan peringatan merah `BA TIDAK VALID — BELUM DITANDATANGANI`. Setelah dokumen `FINALIZED`, generator hanya memakai snapshot immutable; data live tidak lagi menjadi sumber PDF resmi. Header response preview/download menyediakan `X-BA-Document-Status` dan `X-BA-Document-Validity`.
+
 Layout native mempunyai identitas SHA-256:
 
-`248d76c5c7c2018fef914f87330ee5edba2a2c6634b73d83ce8b8c8499409a53`
+`42deff3f2c917c857377a716dcc5486dca24ca0c724497b22c8ff4953e2e34f0`
 
 Versi renderer adalah `tko-native-layout-v5`. Identitas layout disimpan pada kolom legacy `templateChecksumSha256`; nama kolom dipertahankan untuk kompatibilitas database/API, tetapi nilainya sekarang adalah checksum spesifikasi layout native, bukan checksum file PDF.
 
@@ -69,7 +71,7 @@ Generate pertama memberi HTTP `201`; panggilan idempotent berikutnya HTTP `200`.
   "mimeType": "application/pdf",
   "fileSize": 325000,
   "checksumSha256": "...",
-  "templateChecksumSha256": "248d76c5c7c2018fef914f87330ee5edba2a2c6634b73d83ce8b8c8499409a53",
+  "templateChecksumSha256": "42deff3f2c917c857377a716dcc5486dca24ca0c724497b22c8ff4953e2e34f0",
   "snapshotChecksumSha256": "...",
   "rendererVersion": "tko-native-layout-v5",
   "formPageCount": 3,

@@ -1354,7 +1354,7 @@ GET  /api/v1/shipments/<SHIPMENT_ID>/ba/loading/pdf/preview
 GET  /api/v1/shipments/<SHIPMENT_ID>/ba/loading/pdf/download
 ```
 
-Loading Master harus merupakan assignee dan shipment masih `DRAFT`. Kumpulkan signature pada langkah ini, tentukan destination pada langkah berikutnya, lalu panggil finalisasi. Finalisasi memerlukan sealing `READY`, destination valid, serta ketiga role; sesudahnya form, segel, attachment loading, destination, dan signature LOADING dikunci. PDF selalu dibuat dari snapshot final immutable dan generate ulang mengembalikan checksum yang sama. Upload file signature tetap memakai `PUT /signatures/:id/file`.
+Loading Master harus merupakan assignee dan shipment masih `DRAFT`. Kumpulkan signature pada langkah ini, tentukan destination pada langkah berikutnya, lalu panggil finalisasi. Metadata role belum sah tanpa file: backend menandainya `UNSIGNED` atau `INVALID_FILE`; hanya file valid dengan `signedAt` yang menghasilkan `SIGNED`. Finalisasi memerlukan sealing `READY`, destination valid, serta ketiga role berstatus `SIGNED`; sesudahnya form, segel, attachment loading, destination, dan signature LOADING dikunci. Sebelum finalisasi, PDF draft tetap dapat dibuat; slot belum sah kosong dengan peringatan merah bahwa BA tidak valid. Setelah finalisasi, PDF resmi selalu dibuat dari snapshot final immutable dan generate ulang mengembalikan checksum yang sama. Upload file signature tetap memakai `PUT /signatures/:id/file`.
 
 ## 5.15 Langkah 12 — Menentukan destination setelah sealing READY
 
@@ -1620,7 +1620,7 @@ PUT  /api/v1/shipments/<SHIPMENT_ID>/ba/unloading/signatures/TERMINAL_REPRESENTA
 POST /api/v1/shipments/<SHIPMENT_ID>/ba/unloading/finalize
 ```
 
-Assigned Unloading Master, Supervisor, atau Admin dapat mengelolanya. Finalisasi BA UNLOADING memerlukan BA LOADING final, seluruh segel aktif pada snapshot LOADING sudah diverifikasi, dan ketiga role UNLOADING lengkap. Snapshot final memisahkan `loadingAttachments` dari snapshot lama dan `unloadingAttachments` milik verification. Setelah final, verification, foto verification, serta signature UNLOADING terkunci. Endpoint lama berikut tetap tersedia khusus data/consumer legacy:
+Assigned Unloading Master, Supervisor, atau Admin dapat mengelolanya. Satu role baru sah setelah file phase-aware tersedia dan lolos pemeriksaan ukuran/checksum; metadata nama atau `signedAt` saja menghasilkan `isSigned=false`. Finalisasi BA UNLOADING memerlukan BA LOADING final, seluruh segel aktif pada snapshot LOADING sudah diverifikasi, dan ketiga file signature UNLOADING sah. Snapshot final memisahkan `loadingAttachments` dari snapshot lama dan `unloadingAttachments` milik verification. Setelah final, verification, foto verification, serta signature UNLOADING terkunci. Endpoint lama berikut tetap tersedia khusus data/consumer legacy:
 
 ```text
 GET  /api/v1/shipments/<SHIPMENT_ID>/signatures
@@ -1672,6 +1672,8 @@ Finalisasi memerlukan:
 - BA UNLOADING sudah berstatus `FINALIZED`.
 
 Foto verification tetap opsional. Tiga signature UNLOADING wajib ketika BA UNLOADING difinalisasi. Jika BA tersebut belum final, validasi lifecycle mengembalikan `UNLOADING_BA_NOT_FINALIZED`.
+
+PDF draft UNLOADING dapat dibuat ketika shipment `SANDAR` dan BA LOADING sudah final, walaupun signature UNLOADING belum lengkap. Slot belum sah kosong dengan peringatan merah dan metadata artefak bernilai `documentStatus=DRAFT`, `documentValidity=INVALID_SIGNATURES`. Draft tidak membuka gate `FINISH`; PDF resmi setelah finalisasi tetap snapshot-only.
 
 ## 6.11 Langkah 9 — Finalisasi shipment
 

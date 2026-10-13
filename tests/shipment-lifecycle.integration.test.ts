@@ -85,6 +85,7 @@ test("Lifecycle shipment LOADING, DISCHARGE, ROB, validasi gagal, dan final snap
   let unloadingBaPdfStorageKey = "";
   let loadingBaPdfChecksum = "";
   let operationalXlsxPath = "";
+  const signatureFileKeys = new Set<string>();
 
   try {
     const activities = new Map<string, { id: string; code: string }>();
@@ -232,6 +233,12 @@ test("Lifecycle shipment LOADING, DISCHARGE, ROB, validasi gagal, dan final snap
         );
         assert.equal(signature.response.status, 200, JSON.stringify(signature.body));
         ids.set(role, signature.body.data.id);
+        const form = new FormData();
+        const bytes = await sharp({ create: { width: 4, height: 4, channels: 4, background: { r: 10, g: 30, b: 90, alpha: 1 } } }).png().toBuffer();
+        form.append("file", new Blob([new Uint8Array(bytes)], { type: "image/png" }), `${role}.png`);
+        const upload = await call<unknown>(`/signatures/${signature.body.data.id}/file`, { method: "PUT", body: form });
+        assert.equal(upload.response.status, 200, JSON.stringify(upload.body));
+        signatureFileKeys.add(`signature-loading-${signature.body.data.id}.png`);
       }
       return ids;
     };
@@ -250,6 +257,14 @@ test("Lifecycle shipment LOADING, DISCHARGE, ROB, validasi gagal, dan final snap
         );
         assert.equal(signature.response.status, 200, JSON.stringify(signature.body));
         ids.set(role, signature.body.data.id);
+        const form = new FormData();
+        const bytes = await sharp({ create: { width: 4, height: 4, channels: 4, background: { r: 90, g: 30, b: 10, alpha: 1 } } }).png().toBuffer();
+        form.append("file", new Blob([new Uint8Array(bytes)], { type: "image/png" }), `${role}.png`);
+        const upload = await call<unknown>(
+          `/signatures/${signature.body.data.id}/file`, { method: "PUT", body: form }, unloadingMaster.accessToken,
+        );
+        assert.equal(upload.response.status, 200, JSON.stringify(upload.body));
+        signatureFileKeys.add(`signature-unloading-${signature.body.data.id}.png`);
       }
       return ids;
     };
@@ -404,7 +419,7 @@ test("Lifecycle shipment LOADING, DISCHARGE, ROB, validasi gagal, dan final snap
     assert.ok(surveyorSignatureId);
     assert.equal((await call<unknown>(`/signatures/${surveyorSignatureId}`, { method: "DELETE" })).response.status, 200);
     const finalizeWithoutSignature = await call<unknown>(`/shipments/${reportId}/ba/loading/finalize`, json("POST", {}));
-    assert.equal(finalizeWithoutSignature.response.status, 400);
+    assert.equal(finalizeWithoutSignature.response.status, 409);
     assert.match(finalizeWithoutSignature.body.message, /SURVEYOR/);
     await writeLoadingSignatures(reportId);
     assert.equal((await call<unknown>(
@@ -529,7 +544,7 @@ test("Lifecycle shipment LOADING, DISCHARGE, ROB, validasi gagal, dan final snap
     const finalizeWithoutUnloadingSignature = await call<unknown>(
       `/shipments/${reportId}/ba/unloading/finalize`, json("POST", {}), unloadingMaster.accessToken,
     );
-    assert.equal(finalizeWithoutUnloadingSignature.response.status, 400);
+    assert.equal(finalizeWithoutUnloadingSignature.response.status, 409);
     assert.match(finalizeWithoutUnloadingSignature.body.message, /Signature BA UNLOADING/);
     const unloadingSignatureIds = await writeUnloadingSignatures(reportId);
     assert.equal(unloadingSignatureIds.size, 3);
@@ -779,6 +794,7 @@ test("Lifecycle shipment LOADING, DISCHARGE, ROB, validasi gagal, dan final snap
     assert.equal(finalizationAuditApi.body.data.length, 1);
     assert.equal(finalizationAuditApi.body.data[0]!.entityType, "SHIPMENT_VOYAGE");
   } finally {
+    for (const key of signatureFileKeys) await removeFile(key).catch(() => {});
     if (lifecycleAttachmentKey) await removeFile(lifecycleAttachmentKey).catch(() => {});
     if (unloadingAttachmentKey) await removeFile(unloadingAttachmentKey).catch(() => {});
     if (loadingBaPdfStorageKey) await unlink(path.resolve(process.cwd(), env.PDF_EXPORT_DIR, loadingBaPdfStorageKey)).catch(() => {});

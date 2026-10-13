@@ -6,6 +6,7 @@ import type { BeritaAcaraPhaseInput, SignatureInput, UpdateSignatureInput, Upser
 import { resolveVerifiedFile, stageFileRemoval, stageFileReplacement } from "../storage/local-storage.js";
 import { AppError } from "../utils/app-error.js";
 import { extensionForMimeType, sanitizeUploadedFileName, validateDocumentationFile } from "../utils/uploaded-file.js";
+import { evaluateSignatureRoles, REQUIRED_SIGNATURE_ROLES } from "./signature-status.service.js";
 
 export type SignatureActor = { id: string; role: UserRole };
 
@@ -24,8 +25,20 @@ type SignatureTransactionClient = Pick<typeof prisma, "$queryRawUnsafe" | "seali
 const signatureInclude = {
   user: { select: { id: true, username: true, fullName: true, role: true } },
 } satisfies Prisma.ReportSignatureInclude;
-const requiredSignatureRoles = ["CHIEF_OFFICER", "SURVEYOR", "TERMINAL_REPRESENTATIVE"] as const;
+type IncludedSignature = Prisma.ReportSignatureGetPayload<{ include: typeof signatureInclude }>;
 const asJson = (value: unknown) => JSON.parse(JSON.stringify(value)) as Prisma.InputJsonValue;
+
+async function withPhaseSignatureStatus(signature: IncludedSignature) {
+  if (!signature.phase) return signature;
+  const validation = await evaluateSignatureRoles([signature], signature.phase);
+  const status = validation.roles.find((item) => item.role === signature.role)!;
+  return {
+    ...signature,
+    signatureStatus: status.state,
+    isSigned: status.isSigned,
+    missingRequirements: status.missingRequirements,
+  };
+}
 
 function canonicalJson(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
@@ -73,7 +86,7 @@ function parseLoadingBaSnapshot(value: unknown): LoadingBaSnapshot {
     throw new AppError(409, "Struktur snapshot BA LOADING tidak valid untuk finalisasi UNLOADING");
   }
   const roles = new Set(snapshot.signatures.filter((item) => item.phase === "LOADING").map((item) => item.role));
-  if (requiredSignatureRoles.some((role) => !roles.has(role))) {
+  if (REQUIRED_SIGNATURE_ROLES.some((role) => !roles.has(role))) {
     throw new AppError(409, "Snapshot BA LOADING tidak mempunyai tiga signature LOADING lengkap");
   }
   for (const record of snapshot.records) {
@@ -205,7 +218,7 @@ export async function getSignature(id: string, actor: SignatureActor) {
   const signature = await loadSignature(id);
   assertReadable(signature.sealingReport, actor);
   const { sealingReport: _report, baDocument: _document, ...metadata } = signature;
-  return metadata;
+  return withPhaseSignatureStatus(metadata);
 }
 
 export async function createSignature(reportId: string, input: SignatureInput, actor: SignatureActor) {
@@ -222,13 +235,14 @@ export async function createSignature(reportId: string, input: SignatureInput, a
     ...(input.signatureUrl === undefined ? {} : { signatureUrl: input.signatureUrl }),
     ...(input.signedAt === undefined ? {} : { signedAt: input.signedAt }),
   };
-  return prisma.$transaction(async (rawTransaction) => {
+  const signature = await prisma.$transaction(async (rawTransaction) => {
     const tx = rawTransaction as unknown as SignatureTransactionClient;
     await lockWritableReport(tx, reportId, actor);
     const created = await tx.reportSignature.create({ data, include: signatureInclude });
     await tx.auditLog.create({ data: { userId: actor.id, action: "CREATE", entityType: "REPORT_SIGNATURE", entityId: id, newData: data as Prisma.InputJsonValue } });
     return created;
   });
+  return signature;
 }
 
 export async function upsertSignature(
@@ -279,11 +293,19 @@ export async function listBaSignatures(reportId: string, phase: BeritaAcaraPhase
   const report = await loadReport(reportId);
   if (!report.shipmentNumber) throw new AppError(400, "Berita Acara phase-aware hanya tersedia untuk shipment/voyage canonical");
   assertReadable(report, actor);
-  return prisma.reportSignature.findMany({
+  const signatures = await prisma.reportSignature.findMany({
     where: { sealingReportId: reportId, phase },
     include: signatureInclude,
     orderBy: { role: "asc" },
   });
+  const validation = await evaluateSignatureRoles(signatures, phase);
+  const statusById = new Map(validation.roles.filter((item) => item.signatureId).map((item) => [item.signatureId, item]));
+  return signatures.map((signature: IncludedSignature) => ({
+    ...signature,
+    signatureStatus: statusById.get(signature.id)?.state ?? "UNSIGNED",
+    isSigned: statusById.get(signature.id)?.isSigned ?? false,
+    missingRequirements: statusById.get(signature.id)?.missingRequirements ?? [],
+  }));
 }
 
 export async function getBaDocument(reportId: string, phase: BeritaAcaraPhaseInput, actor: SignatureActor) {
@@ -299,7 +321,18 @@ export async function getBaDocument(reportId: string, phase: BeritaAcaraPhaseInp
     },
   });
   if (!document) throw new AppError(404, `Berita Acara ${phase} belum dibuat`);
-  return document;
+  const validation = await evaluateSignatureRoles(document.signatures, phase);
+  const statusById = new Map(validation.roles.filter((item) => item.signatureId).map((item) => [item.signatureId, item]));
+  return {
+    ...document,
+    signatureValidation: validation,
+    signatures: document.signatures.map((signature: IncludedSignature) => ({
+      ...signature,
+      signatureStatus: statusById.get(signature.id)?.state ?? "UNSIGNED",
+      isSigned: statusById.get(signature.id)?.isSigned ?? false,
+      missingRequirements: statusById.get(signature.id)?.missingRequirements ?? [],
+    })),
+  };
 }
 
 export async function upsertBaSignature(
@@ -312,7 +345,7 @@ export async function upsertBaSignature(
   const report = await loadReport(reportId);
   assertPhaseWritable(report, phase, actor);
   await validateUser(input.userId);
-  return prisma.$transaction(async (rawTransaction) => {
+  const updated = await prisma.$transaction(async (rawTransaction) => {
     const tx = rawTransaction as unknown as SignatureTransactionClient;
     const locked = await lockWritableReport(tx, reportId, actor, phase);
     const document = locked.document ?? await ensureBaDocument(tx, reportId, phase);
@@ -344,6 +377,7 @@ export async function upsertBaSignature(
     });
     return signature;
   });
+  return withPhaseSignatureStatus(updated);
 }
 
 export async function finalizeBaDocument(reportId: string, phase: BeritaAcaraPhaseInput, actor: SignatureActor) {
@@ -355,11 +389,6 @@ export async function finalizeBaDocument(reportId: string, phase: BeritaAcaraPha
       where: { sealingReportId: reportId, phase },
       orderBy: { role: "asc" },
     }) as Prisma.ReportSignatureGetPayload<Record<string, never>>[];
-    const availableRoles = new Set(signatures.map((signature) => signature.role));
-    const missingRoles = requiredSignatureRoles.filter((role) => !availableRoles.has(role));
-    if (missingRoles.length > 0) {
-      throw new AppError(400, `Signature BA ${phase} belum lengkap: ${missingRoles.join(", ")}`);
-    }
 
     const source = await tx.sealingReport.findUnique({
       where: { id: reportId },
@@ -498,6 +527,13 @@ export async function finalizeBaDocument(reportId: string, phase: BeritaAcaraPha
       if (unverifiedSealNumbers.length > 0) {
         throw new AppError(400, `Seluruh segel aktif BA LOADING harus diverifikasi: ${unverifiedSealNumbers.join(", ")}`);
       }
+      const signatureValidation = await evaluateSignatureRoles(signatures, phase);
+      if (!signatureValidation.isComplete) {
+        throw new AppError(409, `Signature BA ${phase} belum sah: ${signatureValidation.incompleteRoles.join(", ")}`, {
+          code: "BA_SIGNATURES_INCOMPLETE",
+          signatureValidation,
+        });
+      }
 
       const withLoadingProvenance = (attachment: LoadingSnapshotAttachment, sealingRecordId: string | null) => ({
         ...attachment,
@@ -559,6 +595,8 @@ export async function finalizeBaDocument(reportId: string, phase: BeritaAcaraPha
         signatureMimeType: signature.signatureMimeType,
         signatureFileSize: signature.signatureFileSize?.toString() ?? null,
         signatureChecksumSha256: signature.signatureChecksumSha256,
+        isSigned: true,
+        signatureStatus: "SIGNED",
       }));
       const finalizedAt = new Date();
       const loadingSnapshotChecksumSha256 = snapshotChecksum(loadingSnapshot);
@@ -609,6 +647,11 @@ export async function finalizeBaDocument(reportId: string, phase: BeritaAcaraPha
         loadingSignatures,
         unloadingSignatures,
         signatures: [...loadingSignatures, ...unloadingSignatures],
+        signatureValidation: {
+          isComplete: true,
+          roles: signatureValidation.roles,
+          incompleteRoles: [],
+        },
         verificationSummary: {
           activeSealCount: activeLoadingSeals.length,
           verifiedSealCount: activeLoadingSeals.length,
@@ -682,6 +725,14 @@ export async function finalizeBaDocument(reportId: string, phase: BeritaAcaraPha
           throw new AppError(400, `Titik required ${String(point.code ?? point.vesselSealingPointId)} belum selesai`);
         }
       }
+    }
+
+    const signatureValidation = await evaluateSignatureRoles(signatures, phase);
+    if (!signatureValidation.isComplete) {
+      throw new AppError(409, `Signature BA ${phase} belum sah: ${signatureValidation.incompleteRoles.join(", ")}`, {
+        code: "BA_SIGNATURES_INCOMPLETE",
+        signatureValidation,
+      });
     }
 
     const finalizedAt = new Date();
@@ -759,7 +810,14 @@ export async function finalizeBaDocument(reportId: string, phase: BeritaAcaraPha
         signatureMimeType: signature.signatureMimeType,
         signatureFileSize: signature.signatureFileSize?.toString() ?? null,
         signatureChecksumSha256: signature.signatureChecksumSha256,
+        isSigned: true,
+        signatureStatus: "SIGNED",
       })),
+      signatureValidation: {
+        isComplete: true,
+        roles: signatureValidation.roles,
+        incompleteRoles: [],
+      },
     });
     const finalized = await tx.beritaAcaraDocument.update({
       where: { id: document.id },
@@ -795,7 +853,7 @@ export async function updateSignature(id: string, input: UpdateSignatureInput, a
     ...(input.signatureUrl === undefined ? {} : { signatureUrl: input.signatureUrl }),
     ...(input.signedAt === undefined ? {} : { signedAt: input.signedAt }),
   };
-  return prisma.$transaction(async (rawTransaction) => {
+  const updated = await prisma.$transaction(async (rawTransaction) => {
     const tx = rawTransaction as unknown as SignatureTransactionClient;
     await lockWritableReport(tx, signature.sealingReportId, actor, signature.phase ?? undefined);
     const updated = await tx.reportSignature.update({ where: { id }, data, include: signatureInclude });
@@ -811,6 +869,7 @@ export async function updateSignature(id: string, input: UpdateSignatureInput, a
     });
     return updated;
   });
+  return withPhaseSignatureStatus(updated);
 }
 
 export async function uploadSignatureFile(id: string, file: Express.Multer.File | undefined, actor: SignatureActor) {
@@ -826,6 +885,7 @@ export async function uploadSignatureFile(id: string, file: Express.Multer.File 
     signatureMimeType: file.mimetype,
     signatureFileSize: BigInt(file.size),
     signatureChecksumSha256: checksumSha256,
+    signedAt: signature.signedAt ?? new Date(),
   };
   let stagedReplacement: Awaited<ReturnType<typeof stageFileReplacement>> | null = null;
   let stagedPrevious: Awaited<ReturnType<typeof stageFileRemoval>> | null = null;
@@ -874,7 +934,7 @@ export async function uploadSignatureFile(id: string, file: Express.Multer.File 
     const committedReplacement = stagedReplacement as Awaited<ReturnType<typeof stageFileReplacement>> | null;
     if (committedPrevious) await committedPrevious.commit();
     if (committedReplacement) await committedReplacement.commit();
-    return updated;
+    return withPhaseSignatureStatus(updated);
   } catch (error) {
     const failedPrevious = stagedPrevious as Awaited<ReturnType<typeof stageFileRemoval>> | null;
     const failedReplacement = stagedReplacement as Awaited<ReturnType<typeof stageFileReplacement>> | null;

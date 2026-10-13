@@ -26,16 +26,18 @@ Semua endpoint tersedia melalui alias `shipments`, `voyages`, dan `reports`; rec
 | `GET` | `/{resource}/:id/ba/:phase/signatures` | Tiga slot signature pada phase. |
 | `PUT` | `/{resource}/:id/ba/:phase/signatures/:role` | Upsert satu slot signature. |
 | `POST` | `/{resource}/:id/ba/:phase/finalize` | Bekukan snapshot dan kunci phase. Body `{}`. |
-| `POST` | `/{resource}/:id/ba/loading/pdf` | Generate artefak PDF LOADING dari snapshot final; idempotent. |
+| `POST` | `/{resource}/:id/ba/loading/pdf` | Generate PDF draft dari data saat ini atau PDF resmi dari snapshot final; idempotent per sumber. |
 | `GET` | `/{resource}/:id/ba/loading/pdf/preview` | Preview byte-stream artefak yang tersimpan. |
 | `GET` | `/{resource}/:id/ba/loading/pdf/download` | Download byte-stream artefak yang sama. |
-| `POST` | `/{resource}/:id/ba/unloading/pdf` | Generate artefak PDF UNLOADING/FINAL dari snapshot final; idempotent. |
+| `POST` | `/{resource}/:id/ba/unloading/pdf` | Generate PDF draft saat `SANDAR` atau PDF resmi dari snapshot final; idempotent per sumber. |
 | `GET` | `/{resource}/:id/ba/unloading/pdf/preview` | Preview byte-stream artefak UNLOADING yang tersimpan. |
 | `GET` | `/{resource}/:id/ba/unloading/pdf/download` | Download byte-stream artefak UNLOADING yang sama. |
 | `PUT` | `/signatures/:id/file` | Unggah/ganti file signature legacy maupun phase-aware. |
 | `GET` | `/signatures/:id/preview` atau `/download` | Baca file dengan verifikasi akses, ukuran, dan SHA-256. |
 
 Parameter `phase` menerima `loading`/`LOADING` atau `unloading`/`UNLOADING`. Role tetap `CHIEF_OFFICER`, `SURVEYOR`, atau `TERMINAL_REPRESENTATIVE`.
+
+Satu slot baru dianggap benar-benar bertanda tangan (`isSigned = true`, `signatureStatus = SIGNED`) apabila metadata `signedAt`, nama/MIME/ukuran/checksum file tersedia dan file phase-aware benar-benar ada serta lolos verifikasi ukuran dan SHA-256. Baris metadata tanpa file bukan tanda tangan sah. `GET .../signatures` dan `GET .../ba/:phase` mengembalikan `isSigned`, `signatureStatus` (`MISSING`, `UNSIGNED`, `INVALID_FILE`, atau `SIGNED`), `missingRequirements`, dan ringkasan `signatureValidation`. Upload `PUT /signatures/:id/file` otomatis mengisi `signedAt` bila sebelumnya kosong.
 
 Payload upsert:
 
@@ -59,6 +61,8 @@ Payload upsert:
 - Departure shipment canonical mensyaratkan BA LOADING final. Kegagalan ini dilaporkan sebagai `LOADING_BA_NOT_FINALIZED`.
 - Transition `FINISH` shipment canonical mensyaratkan BA UNLOADING final. Kegagalan ini dilaporkan sebagai `UNLOADING_BA_NOT_FINALIZED`.
 
+PDF draft boleh dibuat sebelum signature lengkap. Slot yang belum sah tetap kosong dan menampilkan peringatan merah `BA TIDAK VALID — BELUM DITANDATANGANI`; response artefak serta header preview/download memberi `documentStatus=DRAFT` dan `documentValidity=INVALID_SIGNATURES`. Jika ketiga file signature sah, draft diberi `documentValidity=VALID` dan dirender normal. Status `VALID` pada draft tidak sama dengan finalisasi: departure/finish tetap mensyaratkan dokumen phase berstatus `FINALIZED`. Finalisasi tetap mengembalikan HTTP 409 dengan kode `BA_SIGNATURES_INCOMPLETE` jika satu slot belum sah.
+
 Snapshot LOADING menyimpan header shipment, destination assignment, master terkait pada saat finalisasi, assignment petugas, konfigurasi form, record dan hanya segel aktif, attachment loading, serta metadata dan checksum ketiga signature LOADING. Snapshot inilah satu-satunya input generator PDF; perubahan master data setelah finalisasi tidak mengubah dokumen.
 
 Snapshot UNLOADING tidak membaca ulang bagian loading dari tabel live. Snapshot ini menyimpan checksum dan referensi dokumen LOADING, header/destination/form/record/segel/foto/signature loading dari snapshot LOADING, lalu menambahkan verification, foto verification, dan tiga signature UNLOADING. `loadingAttachments` dan `unloadingAttachments` dipisahkan; setiap item mempunyai provenance phase, owner, record/seal/verification, waktu, actor upload, dan checksum file.
@@ -73,7 +77,7 @@ Endpoint PDF lama `/{resource}/:id/pdf` adalah compatibility facade. Bila BA UNL
 
 XLSX diklasifikasikan sebagai `OPERATIONAL_LEGACY_EXPORT`, bukan Berita Acara resmi. XLSX tetap memakai endpoint generik `/{resource}/:id/xlsx`, tidak mempunyai artefak per phase, dan untuk shipment baru dibentuk dari `finalSnapshot` yang merupakan salinan snapshot BA UNLOADING saat `FINISH`.
 
-Finalisasi dan seluruh mutasi data loading/unloading mengambil row lock shipment sebelum membaca atau mengubah child record. Urutan konsisten adalah report → dokumen phase → child record → snapshot/artefak → audit. Finalisasi ulang menghasilkan conflict yang jelas dan tidak membuat snapshot kedua. Generate PDF berulang menggunakan satu `BeritaAcaraPdfArtifact`; selama snapshot dan renderer sama, file lama diverifikasi lalu dikembalikan dengan `reused=true` dan checksum identik. Preview/download PDF, attachment, dan signature memverifikasi ukuran serta SHA-256 file (metadata nullable historis tetap dibaca secara kompatibel). Penggantian file signature dilakukan atomik dan rollback transaksi tidak meninggalkan file baru yatim.
+Finalisasi dan seluruh mutasi data loading/unloading mengambil row lock shipment sebelum membaca atau mengubah child record. Urutan konsisten adalah report → dokumen phase → child record → snapshot/artefak → audit. Finalisasi ulang menghasilkan conflict yang jelas dan tidak membuat snapshot kedua. Generate PDF berulang menggunakan satu `BeritaAcaraPdfArtifact`; selama sumber dan renderer sama, file lama diverifikasi lalu dikembalikan dengan `reused=true` dan checksum identik. Draft dihitung dari keadaan terkini dan otomatis dianggap usang ketika form, verification, atau signature berubah. Setelah finalisasi, artefak dibuat ulang hanya dari snapshot immutable dan tidak membaca data live. Preview/download PDF mengirim `X-BA-Document-Status` dan `X-BA-Document-Validity`; attachment dan signature memverifikasi ukuran serta SHA-256 file. Penggantian file signature dilakukan atomik dan rollback transaksi tidak meninggalkan file baru yatim.
 
 ## Kompatibilitas legacy
 

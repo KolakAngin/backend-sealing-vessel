@@ -396,7 +396,7 @@ Content-Type: application/json
 }
 ```
 
-Simpan ID setiap slot. Bila menggunakan file tanda tangan digital:
+Simpan ID setiap slot. Metadata saja belum dianggap bertanda tangan. Unggah file tanda tangan digital pada setiap slot; backend baru memberi `isSigned=true` dan `signatureStatus=SIGNED` setelah file, ukuran, serta checksum lolos verifikasi:
 
 ```http
 PUT <BASE_URL>/api/v1/signatures/<SIGNATURE_ID>/file
@@ -427,7 +427,7 @@ Content-Type: application/json
 {}
 ```
 
-Syarat: shipment `DRAFT`, form telah diinisialisasi, titik required telah `SEALED` dengan minimal satu segel aktif atau sah `NOT_APPLICABLE`, process `READY`, destination valid/lengkap, dan tiga signature LOADING tersedia.
+Syarat: shipment `DRAFT`, form telah diinisialisasi, titik required telah `SEALED` dengan minimal satu segel aktif atau sah `NOT_APPLICABLE`, process `READY`, destination valid/lengkap, dan ketiga file signature LOADING sah. Baris signature tanpa file ditolak dengan HTTP 409 `BA_SIGNATURES_INCOMPLETE`.
 
 Finalisasi membuat snapshot immutable yang memuat header, destination, konfigurasi form, segel aktif, foto loading, dan tiga signature LOADING. Setelah itu form, nomor segel, attachment loading, destination, dan signature LOADING terkunci.
 
@@ -440,7 +440,7 @@ GET  <BASE_URL>/api/v1/shipments/<SHIPMENT_ID>/ba/loading/pdf/download
 Authorization: Bearer <LOADING_MASTER_TOKEN>
 ```
 
-PDF BA LOADING hanya mengambil data dari snapshot immutable, menampilkan tiga signature LOADING, dan hanya mempunyai dokumentasi loading. Generate ulang bersifat idempotent; snapshot dan renderer yang sama menggunakan checksum yang sama.
+Endpoint PDF boleh dipanggil sebelum finalisasi. PDF draft mengambil keadaan loading terkini: signature yang belum sah dibiarkan kosong dan diberi peringatan merah `BA TIDAK VALID — BELUM DITANDATANGANI`. Response dan header file mengandung `documentStatus`/`X-BA-Document-Status` serta `documentValidity`/`X-BA-Document-Validity`. Setelah tiga signature sah, draft dicetak normal. Setelah finalisasi, PDF resmi hanya mengambil snapshot immutable, menampilkan tiga signature LOADING dan dokumentasi loading; generate ulang dari snapshot dan renderer yang sama memakai checksum yang sama.
 
 ## 15. Validasi dan berangkat
 
