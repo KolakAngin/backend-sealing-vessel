@@ -7,3 +7,4 @@ node_modules
 /uploads/*
 !/uploads/.gitkeep
 /exports/*
+/dokumentasi/BACKEND_REQUIREMENTS.md

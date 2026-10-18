@@ -1,0 +1,523 @@
+<!DOCTYPE html>
+        <html>
+        <head>
+            <meta charset="UTF-8">
+            <title>Kebutuhan Backend untuk S-BOARD</title>
+            <style>
+/* From extension vscode.github */
+/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) Microsoft Corporation. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
+ *--------------------------------------------------------------------------------------------*/
+
+.vscode-dark img[src$=\#gh-light-mode-only],
+.vscode-light img[src$=\#gh-dark-mode-only],
+.vscode-high-contrast:not(.vscode-high-contrast-light) img[src$=\#gh-light-mode-only],
+.vscode-high-contrast-light img[src$=\#gh-dark-mode-only] {
+	display: none;
+}
+
+</style>
+            
+        <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/Microsoft/vscode/extensions/markdown-language-features/media/markdown.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/Microsoft/vscode/extensions/markdown-language-features/media/highlight.css">
+<style>
+            body {
+                font-family: -apple-system, BlinkMacSystemFont, 'Segoe WPC', 'Segoe UI', system-ui, 'Ubuntu', 'Droid Sans', sans-serif;
+                font-size: 14px;
+                line-height: 1.6;
+            }
+        </style>
+        <style>
+.task-list-item {
+    list-style-type: none;
+}
+
+.task-list-item-checkbox {
+    margin-left: -20px;
+    vertical-align: middle;
+    pointer-events: none;
+}
+</style>
+<style>
+:root {
+  --color-note: #0969da;
+  --color-tip: #1a7f37;
+  --color-warning: #9a6700;
+  --color-severe: #bc4c00;
+  --color-caution: #d1242f;
+  --color-important: #8250df;
+}
+
+</style>
+<style>
+@media (prefers-color-scheme: dark) {
+  :root {
+    --color-note: #2f81f7;
+    --color-tip: #3fb950;
+    --color-warning: #d29922;
+    --color-severe: #db6d28;
+    --color-caution: #f85149;
+    --color-important: #a371f7;
+  }
+}
+
+</style>
+<style>
+.markdown-alert {
+  padding: 0.5rem 1rem;
+  margin-bottom: 16px;
+  color: inherit;
+  border-left: .25em solid #888;
+}
+
+.markdown-alert>:first-child {
+  margin-top: 0
+}
+
+.markdown-alert>:last-child {
+  margin-bottom: 0
+}
+
+.markdown-alert .markdown-alert-title {
+  display: flex;
+  font-weight: 500;
+  align-items: center;
+  line-height: 1
+}
+
+.markdown-alert .markdown-alert-title .octicon {
+  margin-right: 0.5rem;
+  display: inline-block;
+  overflow: visible !important;
+  vertical-align: text-bottom;
+  fill: currentColor;
+}
+
+.markdown-alert.markdown-alert-note {
+  border-left-color: var(--color-note);
+}
+
+.markdown-alert.markdown-alert-note .markdown-alert-title {
+  color: var(--color-note);
+}
+
+.markdown-alert.markdown-alert-important {
+  border-left-color: var(--color-important);
+}
+
+.markdown-alert.markdown-alert-important .markdown-alert-title {
+  color: var(--color-important);
+}
+
+.markdown-alert.markdown-alert-warning {
+  border-left-color: var(--color-warning);
+}
+
+.markdown-alert.markdown-alert-warning .markdown-alert-title {
+  color: var(--color-warning);
+}
+
+.markdown-alert.markdown-alert-tip {
+  border-left-color: var(--color-tip);
+}
+
+.markdown-alert.markdown-alert-tip .markdown-alert-title {
+  color: var(--color-tip);
+}
+
+.markdown-alert.markdown-alert-caution {
+  border-left-color: var(--color-caution);
+}
+
+.markdown-alert.markdown-alert-caution .markdown-alert-title {
+  color: var(--color-caution);
+}
+
+</style>
+        
+        </head>
+        <body class="vscode-body vscode-light">
+            <h1 id="kebutuhan-backend-untuk-s-board">Kebutuhan Backend untuk S-BOARD</h1>
+<p>Untuk: tim <code>sealing-backend</code>
+Dari: tim frontend S-BOARD (Flutter, role Loading Master &amp; Unloading Master)
+Tanggal: 17 Oktober 2026
+Acuan: branch <code>beta/revisi-1</code>, commit <code>a70741d</code></p>
+<p>Dokumen ini hanya berisi kebutuhan yang <strong>masih terbuka</strong> di backend acuan. Setiap poin sudah dicek
+terhadap kode backend. Frontend mengikuti aturan backend apa adanya; untuk setiap poin dicantumkan apa
+yang dilakukan frontend sementara.</p>
+<h2 id="status-permintaan-revisi">Status permintaan revisi</h2>
+<p>Empat permintaan revisi alur, dibandingkan dengan backend acuan:</p>
+<table>
+<thead>
+<tr>
+<th>Permintaan</th>
+<th>Backend</th>
+<th>Frontend</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Tanda tangan serah terima 3 di loading + 3 di unloading</td>
+<td>✅ Sudah: BA per fase <code>LOADING</code>/<code>UNLOADING</code>, 3 role per fase</td>
+<td>✅ Sudah: 3 slot per fase, BA difinalisasi sebelum berangkat/selesai</td>
+</tr>
+<tr>
+<td>Card summary shipment terlihat semua role</td>
+<td>✅ Tidak butuh perubahan backend</td>
+<td>✅ Sudah tampil untuk Loading Master dan Unloading Master</td>
+</tr>
+<tr>
+<td>Input jetty bongkar dihapus dari pembuatan shipment</td>
+<td>✅ Sudah: tujuan bongkar opsional saat create, ditolak di PATCH</td>
+<td>✅ Sudah: field jetty bongkar dihapus dari form buat shipment</td>
+</tr>
+<tr>
+<td>Jetty bongkar ditetapkan Unloading Master saat klik &quot;Kapal Sandar&quot;</td>
+<td>✅ <strong>Selesai (Revisi 2)</strong>: <code>POST /arrive</code> menerima <code>dischargePlantId</code> &amp; <code>dischargeJettyId</code>, depart &amp; BA LOADING tidak wajib tujuan</td>
+<td>⏳ Pindahkan pilihan Plant–Jetty ke dialog &quot;Konfirmasi kapal sandar&quot; (lihat poin 2)</td>
+</tr>
+<tr>
+<td>Unloading Master dapat membuat shipment</td>
+<td>✅ <strong>Selesai (Revisi 1)</strong>: <code>POST /shipments</code> &amp; <code>/voyages</code> mengizinkan <code>UNLOADING_MASTER</code>, auto-assign <code>unloadingMasterId</code>, edit/delete saat DRAFT</td>
+<td>⏳ Buka tombol &quot;Tambah Shipment&quot; &amp; edit/hapus DRAFT untuk Unloading Master (lihat poin 1)</td>
+</tr>
+</tbody>
+</table>
+<h2 id="ringkasan">Ringkasan</h2>
+<table>
+<thead>
+<tr>
+<th>#</th>
+<th>Kebutuhan</th>
+<th>Prioritas</th>
+<th>Status Backend</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1</td>
+<td>Unloading Master dapat membuat shipment</td>
+<td><strong>P1</strong></td>
+<td>✅ <strong>Selesai</strong></td>
+</tr>
+<tr>
+<td>2</td>
+<td>Tujuan bongkar (Plant–Jetty) ditetapkan Unloading Master saat kapal sandar</td>
+<td><strong>P1</strong></td>
+<td>✅ <strong>Selesai</strong></td>
+</tr>
+<tr>
+<td>3</td>
+<td>CRUD titik segel per shipment oleh Loading Master</td>
+<td><strong>P1</strong></td>
+<td>❌ Belum</td>
+</tr>
+<tr>
+<td>4</td>
+<td>Validasi format nomor segel</td>
+<td><strong>P1</strong></td>
+<td>❌ Belum</td>
+</tr>
+<tr>
+<td>5</td>
+<td>Snapshot 0 titik tetap bisa berangkat; penjaga ganti kapal</td>
+<td><strong>P1</strong></td>
+<td>❌ Belum</td>
+</tr>
+<tr>
+<td>6</td>
+<td>Foto pemasangan terhubung ke segel (<code>sealId</code>)</td>
+<td><strong>P1</strong></td>
+<td>❌ Belum</td>
+</tr>
+<tr>
+<td>7</td>
+<td>Lampiran lintas owner dalam satu request</td>
+<td>P2</td>
+<td>❌ Belum</td>
+</tr>
+<tr>
+<td>8</td>
+<td>Nomor segel terbaca pada verifikasi (<code>scannedSealNumber</code>)</td>
+<td>P2</td>
+<td>❌ Belum</td>
+</tr>
+<tr>
+<td>9</td>
+<td>Aturan pemeriksaan ulang (verifikasi ganda)</td>
+<td>P2</td>
+<td>❌ Belum</td>
+</tr>
+<tr>
+<td>10</td>
+<td>Detail field pada error unik 409</td>
+<td>P2</td>
+<td>❌ Belum</td>
+</tr>
+<tr>
+<td>11</td>
+<td><code>GET /ba/:phase</code> sebelum dokumen ada, dan dokumen BA dari draft PDF</td>
+<td>P2</td>
+<td>❌ Belum</td>
+</tr>
+<tr>
+<td>12</td>
+<td>Hardening keamanan (rate limit, header, refresh token)</td>
+<td>P2</td>
+<td>❌ Belum</td>
+</tr>
+<tr>
+<td>13</td>
+<td>Penyimpanan file denah kapal di backend</td>
+<td>P2 (opsional)</td>
+<td>❌ Belum</td>
+</tr>
+</tbody>
+</table>
+<hr>
+<h2 id="p1">P1</h2>
+<h3 id="1-unloading-master-dapat-membuat-shipment">1. Unloading Master dapat membuat shipment</h3>
+<p><strong>Status Backend:</strong> ✅ <strong>Selesai diimplementasikan</strong>.</p>
+<p><strong>Implementasi Backend:</strong></p>
+<ul>
+<li><code>POST /shipments</code> dan <code>POST /voyages</code> kini mengizinkan role <code>UNLOADING_MASTER</code> (selain <code>ADMIN</code>, <code>SUPERVISOR</code>, dan <code>LOADING_MASTER</code>).</li>
+<li><code>loadingMasterId</code> opsional jika dibuat oleh Unloading Master (dapat dikosongkan atau dipilih dari <code>/users/assignable?role=LOADING_MASTER</code>).</li>
+<li>Pembuat otomatis ditetapkan sebagai <code>unloadingMasterId</code> jika tidak diisi eksplisit, sehingga shipment langsung tampil di list miliknya (<code>GET /shipments</code>).</li>
+<li>Endpoint <code>GET /shipments/:id</code> dapat diakses oleh Unloading Master pembuat.</li>
+<li>Endpoint <code>PATCH /shipments/:id</code>, <code>PATCH /voyages/:id</code>, <code>DELETE /shipments/:id</code>, dan <code>DELETE /voyages/:id</code> mengizinkan Unloading Master pembuat mengedit dan menghapus shipment miliknya selama status masih <code>DRAFT</code>.</li>
+<li>Unloading Master lain tidak berhak mengedit atau menghapus shipment tersebut (403).</li>
+</ul>
+<p><strong>Yang harus dilakukan Frontend:</strong></p>
+<ol>
+<li><strong>Buka tombol &quot;Tambah Shipment&quot;</strong>: Izinkan user dengan role <code>UNLOADING_MASTER</code> untuk membuka form dan membuat shipment (<code>POST /api/v1/shipments</code> atau <code>POST /api/v1/voyages</code>).</li>
+<li><strong>Form Buat Shipment</strong>:
+<ul>
+<li>Jadikan field pemilihan Loading Master (<code>loadingMasterId</code>) opsional, atau sediakan pilihan dari daftar assignable Loading Master.</li>
+<li>Field Plant dan Jetty bongkar tetap tidak perlu ditampilkan / tidak wajib diisi pada saat pembuatan.</li>
+</ul>
+</li>
+<li><strong>Aksi Edit &amp; Hapus</strong>:
+<ul>
+<li>Tampilkan tombol Edit dan Hapus pada detail / card shipment buatan Unloading Master selama berstatus <code>DRAFT</code>.</li>
+<li>Gunakan <code>PATCH /api/v1/shipments/:id</code> untuk edit dan <code>DELETE /api/v1/shipments/:id</code> untuk hapus.</li>
+</ul>
+</li>
+</ol>
+<hr>
+<h3 id="2-tujuan-bongkar-ditetapkan-unloading-master-saat-kapal-sandar">2. Tujuan bongkar ditetapkan Unloading Master saat kapal sandar</h3>
+<p><strong>Status Backend:</strong> ✅ <strong>Selesai diimplementasikan</strong>.</p>
+<p><strong>Implementasi Backend:</strong></p>
+<ul>
+<li>Endpoint <code>POST /api/v1/shipments/:id/arrive</code> (dan <code>/voyages/:id/arrive</code>) kini menerima payload:<pre><code class="language-json"><span class="hljs-punctuation">{</span>
+  <span class="hljs-attr">&quot;occurredAt&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-string">&quot;2026-10-17T03:00:00.000Z&quot;</span><span class="hljs-punctuation">,</span>
+  <span class="hljs-attr">&quot;dischargePlantId&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-string">&quot;uuid-plant&quot;</span><span class="hljs-punctuation">,</span>
+  <span class="hljs-attr">&quot;dischargeJettyId&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-string">&quot;uuid-jetty&quot;</span><span class="hljs-punctuation">,</span>
+  <span class="hljs-attr">&quot;remarks&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-string">&quot;opsional&quot;</span>
+<span class="hljs-punctuation">}</span>
+</code></pre>
+</li>
+<li>Validasi pasangan Plant–Jetty aktif dan terdaftar pada <code>PlantJettyAssignment</code> (mengembalikan 400 jika tidak cocok).</li>
+<li>Dibuat audit log <code>SHIPMENT_DESTINATION_ASSIGNMENT</code> dengan <code>userId</code> Unloading Master yang menetapkan.</li>
+<li><code>DESTINATION_ASSIGNMENT_REQUIRED</code> <strong>dihapus</strong> dari validasi keberangkatan (<code>depart</code>). Kapal dapat berangkat ke status <code>BERLAYAR</code> tanpa tujuan bongkar.</li>
+<li>Finalisasi BA LOADING (<code>POST /shipments/:id/ba/loading/finalize</code>) dan pencetakan PDF muat <strong>tidak lagi mewajibkan</strong> tujuan bongkar. PDF muat menampilkan label <code>&quot;belum ditetapkan&quot;</code> jika tujuan bongkar belum ditentukan.</li>
+<li>Validasi finalisasi BA UNLOADING dan transisi <code>FINISH</code> <strong>mewajibkan</strong> tujuan bongkar (<code>dischargePlantId</code> dan <code>dischargeJettyId</code>) sudah ditetapkan (<code>DESTINATION_REQUIRED</code>).</li>
+<li>Endpoint <code>PUT /shipments/:id/destination-assignment</code> oleh Loading Master tetap dipertahankan saat status <code>DRAFT</code> untuk backward compatibility jika tujuan sudah diketahui sejak awal muat.</li>
+</ul>
+<p><strong>Yang harus dilakukan Frontend:</strong></p>
+<ol>
+<li><strong>Dialog &quot;Konfirmasi Kapal Sandar&quot;</strong>:
+<ul>
+<li>Pindahkan dropdown pemilihan <strong>Discharge Plant</strong> dan <strong>Discharge Jetty</strong> ke dalam dialog/modal konfirmasi saat Unloading Master menekan tombol &quot;Kapal Sandar&quot;.</li>
+<li>Muat pilihan Plant aktif dan Jetty aktif yang terdaftar untuk Plant tersebut (berdasarkan data master).</li>
+<li>Kirim <code>dischargePlantId</code> dan <code>dischargeJettyId</code> di dalam body request <code>POST /api/v1/shipments/:id/arrive</code>.</li>
+</ul>
+</li>
+<li><strong>Hapus Blokir Keberangkatan pada Loading Master</strong>:
+<ul>
+<li>Hapus kewajiban / tombol wajib &quot;Tetapkan Tujuan Bongkar&quot; sebagai syarat klik &quot;Kapal Berangkat&quot; (<code>depart</code>). Loading Master dapat langsung memberangkatkan kapal setelah BA LOADING difinalisasi tanpa perlu menginput tujuan bongkar.</li>
+</ul>
+</li>
+<li><strong>Proteksi Finalisasi BA UNLOADING</strong>:
+<ul>
+<li>Pastikan sebelum Unloading Master menekan &quot;Finalisasi BA UNLOADING&quot;, tujuan bongkar sudah terisi. Jika belum (misal sandar tanpa mengisi tujuan), tampilkan dialog untuk melengkapi tujuan bongkar.</li>
+</ul>
+</li>
+</ol>
+<h3 id="3-crud-titik-segel-per-shipment-oleh-loading-master">3. CRUD titik segel per shipment oleh Loading Master</h3>
+<p><strong>Arahan.</strong> Loading Master dapat menambah, mengubah, dan menghapus titik segel di dalam shipment. Perubahan
+hanya berlaku pada snapshot shipment tersebut dan tidak mengubah master kapal (<code>VesselSealingPoint</code>).</p>
+<p><strong>Kondisi sekarang.</strong> Belum ada endpoint. Snapshot form dibentuk sekali saat <code>prepare-seals</code> dan tidak bisa
+ditambah/dikurangi. <code>SealingRecord.vesselSealingPointId</code> dan <code>Attachment.vesselSealingPointId</code> wajib merujuk
+titik master, sehingga titik yang hanya ada di shipment tidak bisa punya record, segel, atau foto.</p>
+<p><strong>Yang diinginkan.</strong></p>
+<ol>
+<li>
+<p>Identitas titik per shipment (mis. tabel <code>ShipmentSealingPoint</code>) dengan <code>vesselSealingPointId</code> nullable:
+terisi untuk titik dari master, <code>null</code> untuk titik tambahan. <code>SealingRecord</code> dan <code>Attachment</code> merujuk ke
+identitas ini.</p>
+</li>
+<li>
+<p>Endpoint (Loading Master yang ditugaskan, Supervisor, Admin; hanya DRAFT dan sebelum BA LOADING final):</p>
+<table>
+<thead>
+<tr>
+<th>Method</th>
+<th>Path</th>
+<th>Fungsi</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>POST</code></td>
+<td><code>/shipments/:id/form/points</code></td>
+<td>Tambah titik: <code>sectionCode</code>, <code>templateId</code>, <code>compartmentId?</code>, <code>side?</code>, <code>displayName</code>, <code>locationName?</code>, <code>required</code></td>
+</tr>
+<tr>
+<td><code>PATCH</code></td>
+<td><code>/shipments/:id/form/points/:pointId/definition</code></td>
+<td>Ubah nama, lokasi, <code>required</code>, urutan</td>
+</tr>
+<tr>
+<td><code>DELETE</code></td>
+<td><code>/shipments/:id/form/points/:pointId/definition</code></td>
+<td>Hapus titik dari snapshot (<code>reason</code> wajib)</td>
+</tr>
+</tbody>
+</table>
+<p>Path <code>/definition</code> dipakai agar tidak bentrok dengan <code>PUT/PATCH/DELETE /form/points/:pointId</code> untuk isian segel.</p>
+</li>
+<li>
+<p>Aturan yang perlu disepakati: soft-delete titik asal master (dengan alasan dan pelaku), titik bersegel harus
+dikosongkan dulu sebelum dihapus, validasi depart menghitung titik tambahan, audit log, penanda
+<code>origin: &quot;VESSEL&quot; | &quot;SHIPMENT&quot;</code>.</p>
+</li>
+</ol>
+<p><strong>Frontend sementara.</strong> Hanya isian segel, &quot;Tandai N/A&quot;, dan &quot;Kosongkan Titik&quot;.</p>
+<h3 id="4-validasi-format-nomor-segel">4. Validasi format nomor segel</h3>
+<p><strong>Kondisi sekarang.</strong> <code>sealNumber</code> hanya divalidasi 1–100 karakter, trim, uppercase, dan unik per shipment
+(<a href="../sealing-backend/src/schemas/transaction.schema.ts#L121">transaction.schema.ts:121</a>,
+<a href="../sealing-backend/src/schemas/transaction.schema.ts#L178-L179">:178-179</a>). Nomor seperti <code>123</code>, <code>0000</code>, atau
+<code>----</code> diterima. <code>W. 21114069</code> dan <code>W.21114069</code> dianggap nomor berbeda.</p>
+<p><strong>Yang diinginkan.</strong> Tetapkan format resmi dari TKO/SOP/supplier segel (pola digit, panjang, prefix <code>W.</code>),
+tegakkan di <code>formSealValue</code>, <code>createSealBody</code>, dan <code>updateSealBody</code>, dan normalisasi variasi penulisan prefix:</p>
+<pre><code>→ 400 { &quot;message&quot;: &quot;Validasi request gagal&quot;,
+        &quot;details&quot;: [ { &quot;path&quot;: [&quot;body&quot;,&quot;seals&quot;,0,&quot;sealNumber&quot;],
+                       &quot;message&quot;: &quot;Format nomor segel tidak sesuai (contoh: W.21114069)&quot; } ] }
+</code></pre>
+<p><strong>Frontend sementara.</strong> Tidak menambah aturan format sendiri agar tidak menolak segel asli. Hasil pindai
+wajib dikonfirmasi petugas.</p>
+<h3 id="5-snapshot-0-titik-tetap-bisa-berangkat-penjaga-ganti-kapal">5. Snapshot 0 titik tetap bisa berangkat; penjaga ganti kapal</h3>
+<p><strong>Kondisi sekarang.</strong></p>
+<ul>
+<li><code>prepare-seals</code> membuat snapshot walaupun kapal tidak punya titik aktif (<code>pointCount: 0</code>), dan validasi depart
+hanya memeriksa titik <code>required</code>. Shipment bisa berangkat tanpa satu pun segel.</li>
+<li>Penjaga ganti kapal menghitung baris <code>sealingRecord</code>, bukan keberadaan snapshot
+(<a href="../sealing-backend/src/services/transaction.service.ts#L298">transaction.service.ts:298</a>). Snapshot 0 titik
+tidak membuat record, jadi kapal masih bisa diganti, lalu form rusak permanen (<code>FORM_SNAPSHOT_INVALID</code>).</li>
+</ul>
+<p><strong>Yang diinginkan.</strong></p>
+<ol>
+<li><code>prepare-seals</code> menolak bila kapal tidak punya titik aktif (400 &quot;Kapal belum memiliki titik segel aktif&quot;),
+atau validasi depart melaporkan <code>FORM_EMPTY</code>.</li>
+<li>Penjaga ganti kapal memakai keberadaan snapshot:<pre><code class="language-ts"><span class="hljs-keyword">if</span> (input.<span class="hljs-property">vesselId</span> &amp;&amp; input.<span class="hljs-property">vesselId</span> !== old.<span class="hljs-property">vesselId</span> &amp;&amp; old.<span class="hljs-property">formConfigurationSnapshot</span> !== <span class="hljs-literal">null</span>) {
+  <span class="hljs-keyword">throw</span> <span class="hljs-keyword">new</span> <span class="hljs-title class_">AppError</span>(<span class="hljs-number">400</span>, <span class="hljs-string">&quot;Vessel tidak dapat diubah setelah titik segel disiapkan&quot;</span>);
+}
+</code></pre>
+</li>
+</ol>
+<p><strong>Frontend sementara.</strong> Peringatan saat memilih kapal tanpa titik aktif; pilihan kapal dikunci setelah
+snapshot terbentuk.</p>
+<h3 id="6-foto-pemasangan-terhubung-ke-segel">6. Foto pemasangan terhubung ke segel</h3>
+<p><strong>Kondisi sekarang.</strong> Foto pemasangan disimpan sebagai lampiran <code>SECTION</code> dengan <code>vesselSealingPointId</code>, tanpa
+relasi ke <code>Seal</code> (model <code>Attachment</code> hanya punya <code>sealingRecordId</code>, <code>verificationId</code>, <code>vesselSealingPointId</code>).
+Melepas segel, mengosongkan titik, atau menandai N/A tidak menyentuh fotonya, sehingga foto segel yang sudah
+dilepas tetap tercetak di BA.</p>
+<p><strong>Yang diinginkan.</strong></p>
+<pre><code>POST /shipments/:id/sections/:code/attachments
+multipart: file, type=PHOTO, vesselSealingPointId=…, sealId=…
+</code></pre>
+<p>Saat segel menjadi <code>REPLACED</code>/<code>REMOVED</code> atau titik dikosongkan, lampiran dengan <code>sealId</code> tersebut ikut diarsipkan
+dan tidak dicetak di BA.</p>
+<p><strong>Frontend sementara.</strong> Foto dicocokkan lewat caption (<code>Foto pemasangan segel NOMOR – titik</code>) dan dihapus
+bersama segelnya. Cara ini hanya andal untuk foto yang diunggah aplikasi ini.</p>
+<hr>
+<h2 id="p2">P2</h2>
+<h3 id="7-lampiran-lintas-owner-dalam-satu-request">7. Lampiran lintas owner dalam satu request</h3>
+<p><strong>Kondisi sekarang.</strong> Setiap endpoint daftar hanya mengembalikan satu owner
+(<a href="../sealing-backend/src/services/attachment.service.ts#L295-L296">attachment.service.ts:295-296</a>). Foto titik
+harus diambil per section (hingga 8 request per shipment), ditambah satu request per verifikasi.</p>
+<p><strong>Yang diinginkan.</strong> <code>GET /shipments/:id/attachments?scope=all</code> mengembalikan lampiran semua owner beserta
+<code>ownerType</code>, <code>sectionCode</code>, <code>vesselSealingPointId</code>, <code>verificationId</code>. Tanpa <code>scope</code>, perilaku lama tetap
+(hanya <code>REPORT</code>).</p>
+<h3 id="8-nomor-segel-terbaca-pada-verifikasi">8. Nomor segel terbaca pada verifikasi</h3>
+<p><strong>Kondisi sekarang.</strong> <code>SealVerification</code> hanya menyimpan <code>condition</code>, <code>verifiedAt</code>, <code>remarks</code>. Ketidaksesuaian
+nomor dicatat frontend sebagai teks di <code>remarks</code>, sehingga tidak bisa dicari atau dilaporkan.</p>
+<p><strong>Yang diinginkan.</strong> Kolom <code>scannedSealNumber String?</code> pada <code>POST /seals/:id/verify</code>, opsional dengan penanda
+turunan <code>numberMatches</code> yang dihitung server.</p>
+<h3 id="9-aturan-pemeriksaan-ulang-verifikasi-ganda">9. Aturan pemeriksaan ulang (verifikasi ganda)</h3>
+<p><strong>Kondisi sekarang.</strong> <code>verifySeal</code> (<a href="../sealing-backend/src/services/transaction.service.ts#L2300">transaction.service.ts:2300</a>)
+menerima verifikasi berulang untuk segel yang sama sampai BA UNLOADING final; status segel mengikuti hasil
+terakhir. BA PDF memuat semua verifikasi beserta fotonya
+(<a href="../sealing-backend/src/services/ba-pdf-export.service.ts#L308">ba-pdf-export.service.ts:308</a>).</p>
+<p><strong>Yang diinginkan.</strong> Resmikan pemeriksaan ulang di dokumentasi dan cetak hanya verifikasi terbaru per segel
+(termasuk fotonya), atau sediakan endpoint koreksi resmi (<code>PATCH /verifications/:id</code> dengan audit). Bila tidak
+diizinkan, tolak dengan 409.</p>
+<p><strong>Frontend sementara.</strong> Tombol &quot;Periksa Ulang&quot; membuat verifikasi baru lalu menghapus foto verifikasi lama.</p>
+<h3 id="10-detail-field-pada-error-unik-409">10. Detail field pada error unik 409</h3>
+<p><strong>Kondisi sekarang.</strong> Pelanggaran unique Prisma (<code>P2002</code>) selalu menjadi pesan generik tanpa field
+(<a href="../sealing-backend/src/middleware/error-handler.ts#L39-L40">src/middleware/error-handler.ts:39-40</a>), misalnya
+untuk nomor shipment duplikat.</p>
+<p><strong>Yang diinginkan.</strong> Petakan <code>error.meta.target</code> ke <code>details</code>:</p>
+<pre><code class="language-json"><span class="hljs-punctuation">{</span> <span class="hljs-attr">&quot;success&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-keyword">false</span><span class="hljs-punctuation">,</span> <span class="hljs-attr">&quot;message&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-string">&quot;Data dengan nilai unik tersebut sudah tersedia&quot;</span><span class="hljs-punctuation">,</span>
+  <span class="hljs-attr">&quot;details&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-punctuation">[</span><span class="hljs-punctuation">{</span> <span class="hljs-attr">&quot;path&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-punctuation">[</span><span class="hljs-string">&quot;body&quot;</span><span class="hljs-punctuation">,</span> <span class="hljs-string">&quot;shipmentNumber&quot;</span><span class="hljs-punctuation">]</span><span class="hljs-punctuation">,</span> <span class="hljs-attr">&quot;message&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-string">&quot;Nomor shipment sudah digunakan&quot;</span> <span class="hljs-punctuation">}</span><span class="hljs-punctuation">]</span> <span class="hljs-punctuation">}</span>
+</code></pre>
+<h3 id="11-get-baphase-sebelum-dokumen-ada-dan-dokumen-ba-dari-draft-pdf">11. <code>GET /ba/:phase</code> sebelum dokumen ada, dan dokumen BA dari draft PDF</h3>
+<p><strong>Kondisi sekarang.</strong></p>
+<ul>
+<li><code>GET /shipments/:id/ba/:phase</code> membalas 404 sampai dokumen BA dibuat (tanda tangan pertama, draft PDF, atau
+finalisasi). Browser mencatat 404 ini sebagai error walaupun kondisinya normal.</li>
+<li>Generate draft PDF BA juga membuat <code>BeritaAcaraDocument</code>. Setelah itu <code>DELETE /shipments/:id</code> ditolak 409
+(<a href="../sealing-backend/src/services/transaction.service.ts#L529">transaction.service.ts:529</a>), padahal belum ada
+tanda tangan atau data BA yang diisi.</li>
+</ul>
+<p><strong>Yang diinginkan.</strong></p>
+<ul>
+<li><code>GET /ba/:phase</code> membalas 200 dengan dokumen virtual saat belum dibuat, mis.
+<code>{ &quot;id&quot;: null, &quot;phase&quot;: &quot;LOADING&quot;, &quot;status&quot;: &quot;DRAFT&quot;, &quot;signatures&quot;: [], &quot;signatureValidation&quot;: { … } }</code>.</li>
+<li>Draft PDF tidak membuat dokumen BA, atau hapus shipment hanya ditolak bila BA sudah punya tanda tangan atau
+sudah final.</li>
+</ul>
+<p><strong>Frontend sementara.</strong> Membaca <code>GET /ba/:phase/signatures</code> dulu (selalu 200) dan hanya meminta dokumen bila
+sudah ada tanda tangan. Menu hapus disembunyikan bila BA Muat sudah punya tanda tangan; kasus draft PDF tetap
+menampilkan pesan 409 dari backend.</p>
+<h3 id="12-hardening-keamanan">12. Hardening keamanan</h3>
+<p><strong>Kondisi sekarang.</strong> Belum ada rate limit/lockout pada <code>POST /auth/login</code>, belum ada header keamanan
+(<code>helmet</code>), dan JWT berlaku 8 jam tanpa refresh token atau pencabutan.</p>
+<p><strong>Yang diinginkan.</strong></p>
+<ol>
+<li>Rate limit login, mis. 10 percobaan per 15 menit per IP + username, response 429.</li>
+<li><code>helmet()</code> untuk header keamanan standar.</li>
+<li>Access token lebih pendek (mis. 1 jam) plus endpoint refresh, atau daftar token yang dicabut.</li>
+<li>Jangan menerima token lewat query string untuk preview file; frontend sudah memakai header <code>Authorization</code>.</li>
+</ol>
+<h3 id="13-penyimpanan-file-denah-kapal-di-backend-opsional">13. Penyimpanan file denah kapal di backend (opsional)</h3>
+<p><strong>Kondisi sekarang.</strong> Denah hanya berupa URL teks (<code>Vessel.drawingFileUrl</code> / <code>drawingLink</code>), sehingga file harus
+disimpan di server lain yang biasanya dapat diakses tanpa login dan perlu CORS untuk Flutter Web.</p>
+<p><strong>Yang diinginkan (bila denah perlu dilindungi login atau diunggah dari panel admin).</strong></p>
+<pre><code>PUT /api/v1/vessels/:id/drawing   (ADMIN, multipart &quot;file&quot;: PNG/JPEG/WebP)
+GET /api/v1/vessels/:id/drawing   (AUTH, stream file, Cache-Control private)
+</code></pre>
+<p>Setelah upload, <code>drawingFileUrl</code> diisi URL endpoint GET. Aplikasi tidak perlu diubah karena URL backend sudah
+dimuat dengan header <code>Authorization</code>.</p>
+<hr>
+<h2 id="catatan-dokumentasi-backend">Catatan dokumentasi backend</h2>
+<ul>
+<li><code>dokumentasi/PANDUAN_API_PER_ROLE.md</code> §5.5 masih menyebut <code>/users/assignable</code> belum tersedia, padahal endpoint
+itu sudah ada (<a href="../sealing-backend/src/routes/user.routes.ts#L11">src/routes/user.routes.ts:11</a>).</li>
+</ul>
+
+            
+            
+        </body>
+        </html>

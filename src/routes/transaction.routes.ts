@@ -9,6 +9,7 @@ import * as schema from "../schemas/transaction.schema.js";
 export const transactionRouter = Router();
 const loaders = authorize("ADMIN", "SUPERVISOR", "LOADING_MASTER");
 const unloaders = authorize("ADMIN", "SUPERVISOR", "UNLOADING_MASTER");
+const shipmentCreators = authorize("ADMIN", "SUPERVISOR", "LOADING_MASTER", "UNLOADING_MASTER");
 const signatureWriters = authorize("ADMIN", "SUPERVISOR", "LOADING_MASTER", "UNLOADING_MASTER");
 const xlsxGenerators = authorize("ADMIN", "SUPERVISOR", "LOADING_MASTER", "UNLOADING_MASTER");
 const pdfGenerators = authorize("ADMIN", "SUPERVISOR", "LOADING_MASTER", "UNLOADING_MASTER");
@@ -29,10 +30,10 @@ transactionRouter.post("/reports/:id/prepare-seals", loaders, validateRequest(sc
 // Endpoint canonical shipment/voyage. /reports tetap menjadi endpoint legacy
 // agar integrasi laporan lama tidak terputus.
 transactionRouter.get("/voyages", validateRequest(schema.listReportsRequest), controller.listReports);
-transactionRouter.post("/voyages", loaders, validateRequest(schema.createShipmentRequest), controller.createShipment);
+transactionRouter.post("/voyages", shipmentCreators, validateRequest(schema.createShipmentRequest), controller.createShipment);
 transactionRouter.get("/voyages/:id", validateRequest(schema.reportDetailRequest), controller.getReport);
-transactionRouter.patch("/voyages/:id", loaders, validateRequest(schema.updateShipmentRequest), controller.updateShipment);
-transactionRouter.delete("/voyages/:id", loaders, validateRequest(schema.reportDetailRequest), controller.deleteShipment);
+transactionRouter.patch("/voyages/:id", shipmentCreators, validateRequest(schema.updateShipmentRequest), controller.updateShipment);
+transactionRouter.delete("/voyages/:id", shipmentCreators, validateRequest(schema.reportDetailRequest), controller.deleteShipment);
 transactionRouter.post("/voyages/:id/depart", loaders, validateRequest(schema.journeyTransitionRequest), controller.transitionReport("depart"));
 transactionRouter.post("/voyages/:id/arrive", unloaders, validateRequest(schema.journeyTransitionRequest), controller.transitionReport("arrive"));
 transactionRouter.post("/voyages/:id/finish", unloaders, validateRequest(schema.journeyTransitionRequest), controller.transitionReport("finish"));
@@ -41,10 +42,10 @@ transactionRouter.get("/voyages/:id/validation", validateRequest(schema.lifecycl
 transactionRouter.post("/voyages/:id/prepare-seals", loaders, validateRequest(schema.prepareReportSealsRequest), controller.prepareReportSeals);
 
 transactionRouter.get("/shipments", validateRequest(schema.listReportsRequest), controller.listReports);
-transactionRouter.post("/shipments", loaders, validateRequest(schema.createShipmentRequest), controller.createShipment);
+transactionRouter.post("/shipments", shipmentCreators, validateRequest(schema.createShipmentRequest), controller.createShipment);
 transactionRouter.get("/shipments/:id", validateRequest(schema.reportDetailRequest), controller.getReport);
-transactionRouter.patch("/shipments/:id", loaders, validateRequest(schema.updateShipmentRequest), controller.updateShipment);
-transactionRouter.delete("/shipments/:id", loaders, validateRequest(schema.reportDetailRequest), controller.deleteShipment);
+transactionRouter.patch("/shipments/:id", shipmentCreators, validateRequest(schema.updateShipmentRequest), controller.updateShipment);
+transactionRouter.delete("/shipments/:id", shipmentCreators, validateRequest(schema.reportDetailRequest), controller.deleteShipment);
 transactionRouter.post("/shipments/:id/depart", loaders, validateRequest(schema.journeyTransitionRequest), controller.transitionReport("depart"));
 transactionRouter.post("/shipments/:id/arrive", unloaders, validateRequest(schema.journeyTransitionRequest), controller.transitionReport("arrive"));
 transactionRouter.post("/shipments/:id/finish", unloaders, validateRequest(schema.journeyTransitionRequest), controller.transitionReport("finish"));

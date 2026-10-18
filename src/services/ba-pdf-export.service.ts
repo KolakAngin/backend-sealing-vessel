@@ -524,8 +524,10 @@ async function buildLoadingDraftSnapshot(report: LoadingPdfReport, document: Loa
   const statusById = new Map(validation.roles.filter((item) => item.signatureId).map((item) => [item.signatureId, item]));
   const snapshotAttachment = (attachment: LoadingPdfReport["attachments"][number]) => ({
     ...attachment,
+    createdAt: attachment.createdAt.toISOString(),
     fileSize: attachment.fileSize?.toString() ?? null,
   });
+
   return {
     schemaVersion: 1,
     documentType: "BERITA_ACARA" as const,
@@ -708,7 +710,7 @@ export async function generateLoadingBaPdf(reportId: string, actor: BaPdfActor) 
           formPageCount: generated.formPageCount,
           appendixPageCount: generated.appendixPageCount,
           pageCount: generated.pageCount,
-        } satisfies Prisma.InputJsonValue;
+        } as Prisma.InputJsonValue;
         const data = {
           generatedById: actor.id,
           fileName,
@@ -827,7 +829,7 @@ export async function generateUnloadingBaPdf(reportId: string, actor: BaPdfActor
           unloadingPhotoCount: generated.unloadingPhotoCount,
           nonImageAttachmentCount: generated.nonImageAttachmentCount,
           pageCount: generated.pageCount,
-        } satisfies Prisma.InputJsonValue;
+        } as Prisma.InputJsonValue;
         const data = {
           generatedById: actor.id,
           fileName,

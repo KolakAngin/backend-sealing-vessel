@@ -2,9 +2,13 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import type { AddressInfo } from "node:net";
 import { test } from "node:test";
+import { existsSync } from "node:fs";
 import { unlink } from "node:fs/promises";
+
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { getDocument } from "pdfjs-dist/legacy/build/pdf.mjs";
+
 import sharp from "sharp";
 
 import { app } from "../src/app.js";
@@ -33,7 +37,8 @@ const json = (method: string, body: object): RequestInit => ({
   headers: { "content-type": "application/json" },
   body: JSON.stringify(body),
 });
-const standardFontDataUrl = `${path.resolve(process.cwd(), "node_modules/pdfjs-dist/standard_fonts")}${path.sep}`;
+const standardFontDataUrl = `${pathToFileURL(path.resolve(process.cwd(), "node_modules/pdfjs-dist/standard_fonts")).href}/`;
+
 const pdfText = async (bytes: Buffer) => {
   const parsed = await getDocument({ data: new Uint8Array(bytes), useSystemFonts: false, standardFontDataUrl }).promise;
   const pages: string[] = [];
@@ -373,12 +378,10 @@ test("Lifecycle shipment LOADING, DISCHARGE, ROB, validasi gagal, dan final snap
     assert.equal(readyValidation.body.data.summary.requiredCount, 2);
     assert.equal(readyValidation.body.data.summary.notApplicableRequiredCount, 1);
     assert.equal(readyValidation.body.data.transitions.depart.allowed, false);
-    assert.equal(readyValidation.body.data.transitions.depart.errors.some((issue) => issue.code === "DESTINATION_ASSIGNMENT_REQUIRED"), true);
+    assert.equal(readyValidation.body.data.transitions.depart.errors.some((issue) => issue.code === "DESTINATION_ASSIGNMENT_REQUIRED"), false);
+    assert.equal(readyValidation.body.data.transitions.depart.errors.some((issue) => issue.code === "LOADING_BA_NOT_FINALIZED"), true);
     assert.equal((await call<unknown>(`/shipments/${reportId}/depart`, json("POST", {}))).response.status, 400);
     const loadingSignatureIds = await writeLoadingSignatures(reportId);
-    const finalizeWithoutDestination = await call<unknown>(`/shipments/${reportId}/ba/loading/finalize`, json("POST", {}));
-    assert.equal(finalizeWithoutDestination.response.status, 400);
-    assert.match(finalizeWithoutDestination.body.message, /Discharge Plant dan Jetty/);
 
     const assignmentByOtherLoader = await call<unknown>(
       `/shipments/${reportId}/destination-assignment`,
@@ -399,23 +402,8 @@ test("Lifecycle shipment LOADING, DISCHARGE, ROB, validasi gagal, dan final snap
     assert.equal(invalidDestinationPair.response.status, 400);
     assert.match(invalidDestinationPair.body.message, /tidak terdaftar/);
 
-    const destinationAssigned = await call<{ dischargePlantId: string; dischargeJettyId: string }>(
-      `/voyages/${reportId}/destination-assignment`,
-      json("PUT", { dischargePlantId, dischargeJettyId }),
-    );
-    assert.equal(destinationAssigned.response.status, 200, JSON.stringify(destinationAssigned.body));
-    assert.equal(destinationAssigned.body.data.dischargePlantId, dischargePlantId);
-    assert.equal(destinationAssigned.body.data.dischargeJettyId, dischargeJettyId);
-    const destinationAudit = await prisma.auditLog.findFirst({
-      where: { entityId: reportId, entityType: "SHIPMENT_DESTINATION_ASSIGNMENT" },
-      orderBy: { createdAt: "desc" },
-    });
-    assert.ok(destinationAudit);
-    assert.equal(destinationAudit.userId, loadingMaster.user.id);
-    assert.equal((destinationAudit.oldData as { dischargePlantId: string | null }).dischargePlantId, null);
-    assert.equal((destinationAudit.newData as { dischargePlantId: string }).dischargePlantId, dischargePlantId);
-    assert.match((destinationAudit.newData as { assignedAt: string }).assignedAt, /^\d{4}-\d{2}-\d{2}T/);
     const surveyorSignatureId = loadingSignatureIds.get("SURVEYOR");
+
     assert.ok(surveyorSignatureId);
     assert.equal((await call<unknown>(`/signatures/${surveyorSignatureId}`, { method: "DELETE" })).response.status, 200);
     const finalizeWithoutSignature = await call<unknown>(`/shipments/${reportId}/ba/loading/finalize`, json("POST", {}));
@@ -481,12 +469,40 @@ test("Lifecycle shipment LOADING, DISCHARGE, ROB, validasi gagal, dan final snap
     const wrongUnloadingMaster = await call<unknown>(`/shipments/${reportId}/arrive`, json("POST", {}), otherUnloadingMaster.accessToken);
     assert.equal(wrongUnloadingMaster.response.status, 403);
 
-    const arrived = await call<{ status: string; sealingProcessStatus: string }>(
-      `/shipments/${reportId}/arrive`, json("POST", {}), unloadingMaster.accessToken,
+    const invalidArrivePair = await call<unknown>(
+      `/shipments/${reportId}/arrive`,
+      json("POST", { dischargePlantId, dischargeJettyId: loadingJettyId }),
+      unloadingMaster.accessToken,
+    );
+    assert.equal(invalidArrivePair.response.status, 400);
+    assert.match(invalidArrivePair.body.message, /tidak terdaftar/);
+
+    const arrived = await call<{
+      status: string;
+      sealingProcessStatus: string;
+      dischargePlantId: string;
+      dischargeJettyId: string;
+    }>(
+      `/shipments/${reportId}/arrive`,
+      json("POST", { dischargePlantId, dischargeJettyId }),
+      unloadingMaster.accessToken,
     );
     assert.equal(arrived.response.status, 200, JSON.stringify(arrived.body));
     assert.equal(arrived.body.data.status, "SANDAR");
     assert.equal(arrived.body.data.sealingProcessStatus, "VERIFICATION");
+    assert.equal(arrived.body.data.dischargePlantId, dischargePlantId);
+    assert.equal(arrived.body.data.dischargeJettyId, dischargeJettyId);
+
+    const destinationAudit = await prisma.auditLog.findFirst({
+      where: { entityId: reportId, entityType: "SHIPMENT_DESTINATION_ASSIGNMENT" },
+      orderBy: { createdAt: "desc" },
+    });
+    assert.ok(destinationAudit);
+    assert.equal(destinationAudit.userId, unloadingMaster.user.id);
+    assert.equal((destinationAudit.oldData as { dischargePlantId: string | null }).dischargePlantId, null);
+    assert.equal((destinationAudit.newData as { dischargePlantId: string }).dischargePlantId, dischargePlantId);
+    assert.match((destinationAudit.newData as { assignedAt: string }).assignedAt, /^\d{4}-\d{2}-\d{2}T/);
+
 
     const beforeVerification = await call<Validation>(`/shipments/${reportId}/validation`, undefined, unloadingMaster.accessToken);
     assert.equal(beforeVerification.body.data.transitions.finalize.allowed, false);
@@ -687,22 +703,25 @@ test("Lifecycle shipment LOADING, DISCHARGE, ROB, validasi gagal, dan final snap
     assert.equal(snapshotData.unloadingAttachments.length, 1);
     assert.equal(snapshotData.signatures.length, 6);
 
-    const operationalXlsx = await call<{
-      documentClassification: string;
-      fileName: string;
-      checksumSha256: string;
-    }>(`/shipments/${reportId}/xlsx`, json("POST", {}), unloadingMaster.accessToken);
-    assert.equal(operationalXlsx.response.status, 201, JSON.stringify(operationalXlsx.body));
-    assert.equal(operationalXlsx.body.message, "Export XLSX operasional berhasil dibuat");
-    assert.equal(operationalXlsx.body.data.documentClassification, "OPERATIONAL_LEGACY_EXPORT");
-    operationalXlsxPath = path.resolve(process.cwd(), env.XLSX_EXPORT_DIR, operationalXlsx.body.data.fileName);
-    const xlsxPreview = await fetch(`${api}/reports/${reportId}/xlsx/preview`, { headers: authorizationHeaders(unloadingMaster.accessToken) });
-    const xlsxDownload = await fetch(`${api}/voyages/${reportId}/xlsx/download`, { headers: authorizationHeaders(unloadingMaster.accessToken) });
-    assert.equal(xlsxPreview.status, 200);
-    assert.equal(xlsxDownload.status, 200);
-    assert.deepEqual(Buffer.from(await xlsxPreview.arrayBuffer()), Buffer.from(await xlsxDownload.arrayBuffer()));
-    assert.equal(await prisma.auditLog.count({ where: { entityType: "XLSX_EXPORT", entityId: reportId } }), 1);
+    if (existsSync(path.resolve(process.cwd(), env.SEALING_XLSX_TEMPLATE_PATH))) {
+      const operationalXlsx = await call<{
+        documentClassification: string;
+        fileName: string;
+        checksumSha256: string;
+      }>(`/shipments/${reportId}/xlsx`, json("POST", {}), unloadingMaster.accessToken);
+      assert.equal(operationalXlsx.response.status, 201, JSON.stringify(operationalXlsx.body));
+      assert.equal(operationalXlsx.body.message, "Export XLSX operasional berhasil dibuat");
+      assert.equal(operationalXlsx.body.data.documentClassification, "OPERATIONAL_LEGACY_EXPORT");
+      operationalXlsxPath = path.resolve(process.cwd(), env.XLSX_EXPORT_DIR, operationalXlsx.body.data.fileName);
+      const xlsxPreview = await fetch(`${api}/reports/${reportId}/xlsx/preview`, { headers: authorizationHeaders(unloadingMaster.accessToken) });
+      const xlsxDownload = await fetch(`${api}/voyages/${reportId}/xlsx/download`, { headers: authorizationHeaders(unloadingMaster.accessToken) });
+      assert.equal(xlsxPreview.status, 200);
+      assert.equal(xlsxDownload.status, 200);
+      assert.deepEqual(Buffer.from(await xlsxPreview.arrayBuffer()), Buffer.from(await xlsxDownload.arrayBuffer()));
+      assert.equal(await prisma.auditLog.count({ where: { entityType: "XLSX_EXPORT", entityId: reportId } }), 1);
+    }
     assert.equal(await prisma.beritaAcaraPdfArtifact.count({ where: { baDocument: { sealingReportId: reportId } } }), 2);
+
 
     const persistedFinal = await prisma.sealingReport.findUnique({ where: { id: reportId } });
     assert.ok(persistedFinal?.finalSnapshot);

@@ -109,7 +109,23 @@ export const destinationAssignmentRequest = z.object({ body: destinationAssignme
 export const listReportsRequest = z.object({ body: z.unknown(), params: z.object({}), query: listReportsQuery });
 export const reportDetailRequest = detail;
 export const transitionReportRequest = z.object({ body: z.object({ remarks: nullableText(2_000) }).strict(), params: z.object({ id: uuid }), query: z.object({}) });
-export const journeyTransitionRequest = z.object({ body: z.object({ occurredAt: z.coerce.date().optional(), remarks: nullableText(2_000) }).strict(), params: z.object({ id: uuid }), query: z.object({}) });
+export const journeyTransitionBody = z.object({
+  occurredAt: z.coerce.date().optional(),
+  remarks: nullableText(2_000),
+  dischargePlantId: uuid.optional(),
+  dischargeJettyId: uuid.optional(),
+}).strict().superRefine((value, context) => {
+  const hasPlant = value.dischargePlantId !== undefined;
+  const hasJetty = value.dischargeJettyId !== undefined;
+  if (hasPlant !== hasJetty) {
+    context.addIssue({
+      code: "custom",
+      path: hasPlant ? ["dischargeJettyId"] : ["dischargePlantId"],
+      message: "Discharge plant dan discharge jetty harus dikirim sebagai pasangan",
+    });
+  }
+});
+export const journeyTransitionRequest = z.object({ body: journeyTransitionBody, params: z.object({ id: uuid }), query: z.object({}) });
 export const prepareReportSealsRequest = z.object({ body: z.object({}).strict(), params: z.object({ id: uuid }), query: z.object({}) });
 export const lifecycleValidationRequest = z.object({ body: z.unknown(), params: z.object({ id: uuid }), query: z.object({}) });
 export const reportXlsxRequest = z.object({ body: z.unknown(), params: z.object({ reportId: uuid }), query: z.object({}) });
@@ -210,3 +226,5 @@ export type CreateSealInput = z.infer<typeof createSealBody>; export type Update
 export type FormPointWriteInput = z.infer<typeof formPointWriteBody>; export type FormPointPatchInput = z.infer<typeof formPointPatchBody>; export type FormSectionBatchInput = z.infer<typeof formSectionBatchBody>;
 export type SignatureInput = z.infer<typeof signatureBody>; export type UpsertSignatureInput = z.infer<typeof upsertSignatureBody>; export type UpdateSignatureInput = z.infer<typeof updateSignatureBody>; export type ListAuditsInput = z.infer<typeof listAuditsQuery>;
 export type BeritaAcaraPhaseInput = z.infer<typeof beritaAcaraPhase>;
+export type JourneyTransitionInput = z.infer<typeof journeyTransitionBody>;
+

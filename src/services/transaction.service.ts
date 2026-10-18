@@ -27,6 +27,13 @@ function assertLoadingOwner(createdById: string, actor: Actor, loadingMasterId?:
   }
 }
 
+function assertShipmentModifiable(old: { createdById: string; loadingMasterId: string | null; status: ReportStatus }, actor: Actor) {
+  if (canManage(actor)) return;
+  if (old.status === "DRAFT" && old.createdById === actor.id) return;
+  if (canLoad(actor) && (old.loadingMasterId ?? old.createdById) === actor.id) return;
+  throw new AppError(403, "Anda tidak berhak mengubah transaksi ini");
+}
+
 function assertUnloadingAssignment(unloadingMasterId: string | null, actor: Actor) {
   if (!canUnload(actor)) throw new AppError(403, "Hanya Unloading Master atau Supervisor yang dapat melakukan proses unloading");
   if (!canManage(actor) && unloadingMasterId !== actor.id) {
@@ -65,7 +72,10 @@ export async function listReports(query: ListReportsInput, actor: Actor) {
       { loadingMasterId: actor.id },
       { loadingMasterId: null, createdById: actor.id },
     ] } : {}),
-    ...(actor.role === "UNLOADING_MASTER" ? { unloadingMasterId: actor.id } : {}),
+    ...(actor.role === "UNLOADING_MASTER" ? { OR: [
+      { unloadingMasterId: actor.id },
+      { createdById: actor.id },
+    ] } : {}),
     ...(query.vesselId ? { vesselId: query.vesselId } : {}),
     ...(query.activityId ? { activityId: query.activityId } : {}),
     ...(query.loadingPlantId ? { loadingPlantId: query.loadingPlantId } : {}),
@@ -103,7 +113,7 @@ export async function getReport(id: string, actor?: Actor) {
   const item = await prisma.sealingReport.findUnique({ where: { id }, include: { ...reportInclude, sealingRecords: { include: { vesselSealingPoint: { include: { compartment: true, sealingPointTemplate: true } }, seals: { include: { verifications: true } } }, orderBy: { createdAt: "asc" } }, signatures: { where: { phase: null }, orderBy: { role: "asc" } } } });
   if (!item) throw new AppError(404, "Laporan sealing tidak ditemukan");
   if (actor?.role === "LOADING_MASTER" && (item.loadingMasterId ?? item.createdById) !== actor.id) throw new AppError(403, "Anda tidak berhak melihat perjalanan ini");
-  if (actor?.role === "UNLOADING_MASTER" && item.unloadingMasterId !== actor.id) throw new AppError(403, "Anda tidak berhak menerima perjalanan ini");
+  if (actor?.role === "UNLOADING_MASTER" && item.unloadingMasterId !== actor.id && item.createdById !== actor.id) throw new AppError(403, "Anda tidak berhak menerima perjalanan ini");
   return withReportCompatibility(item);
 }
 
@@ -120,14 +130,16 @@ async function validateLoadingMaster(loadingMasterId: string) {
 }
 
 async function resolveLoadingMasterId(loadingMasterId: string | undefined, actor: Actor) {
-  if (loadingMasterId && !canManage(actor) && loadingMasterId !== actor.id) {
+  if (loadingMasterId && !canManage(actor) && actor.role !== "UNLOADING_MASTER" && loadingMasterId !== actor.id) {
     throw new AppError(403, "Hanya Supervisor atau Admin yang dapat menetapkan Loading Master lain");
   }
   const resolved = loadingMasterId ??
     (actor.role === "LOADING_MASTER" || actor.role === "SUPERVISOR" ? actor.id : undefined);
-  if (!resolved) throw new AppError(400, "Loading Master wajib ditetapkan");
-  await validateLoadingMaster(resolved);
-  return resolved;
+  if (!resolved && actor.role !== "UNLOADING_MASTER") throw new AppError(400, "Loading Master wajib ditetapkan");
+  if (resolved) {
+    await validateLoadingMaster(resolved);
+  }
+  return resolved ?? null;
 }
 
 type ShipmentReferenceClient = Pick<
@@ -205,6 +217,9 @@ async function validateDestinationReferences(input: {
 
 export async function createShipment(input: CreateShipmentInput, actor: Actor) {
   const loadingMasterId = await resolveLoadingMasterId(input.loadingMasterId, actor);
+  const unloadingMasterId = input.unloadingMasterId !== undefined
+    ? input.unloadingMasterId
+    : (actor.role === "UNLOADING_MASTER" ? actor.id : null);
   const productIds = input.productIds ?? (input.productId ? [input.productId] : []);
   await Promise.all([
     validateCoreShipmentReferences({ ...input, productIds }),
@@ -212,7 +227,7 @@ export async function createShipment(input: CreateShipmentInput, actor: Actor) {
       dischargePlantId: input.dischargePlantId,
       dischargeJettyId: input.dischargeJettyId,
     })] : []),
-    validateUnloadingMaster(input.unloadingMasterId),
+    validateUnloadingMaster(unloadingMasterId),
   ]);
 
   const id = randomUUID();
@@ -234,8 +249,8 @@ export async function createShipment(input: CreateShipmentInput, actor: Actor) {
     dischargePlantId: input.dischargePlantId,
     dischargeJettyId: input.dischargeJettyId,
     sealingStatus: (input.sealingStatus ?? defaultSealingStatus).toUpperCase(),
-    loadingMasterId,
-    unloadingMasterId: input.unloadingMasterId,
+    loadingMasterId: loadingMasterId ?? undefined,
+    unloadingMasterId: unloadingMasterId ?? undefined,
     loadingMasterSurveyorName: input.loadingMasterSurveyorName,
     remarks: input.remarks,
     createdById: actor.id,
@@ -256,7 +271,7 @@ export async function updateShipment(id: string, input: UpdateShipmentInput, act
       include: { shipmentProducts: { select: { productId: true }, orderBy: { sequence: "asc" } } },
     });
     if (!old) throw new AppError(404, "Shipment/voyage tidak ditemukan");
-    assertLoadingOwner(old.createdById, actor, old.loadingMasterId);
+    assertShipmentModifiable(old, actor);
     if (old.status !== "DRAFT") throw new AppError(400, "Hanya shipment/voyage DRAFT yang dapat diperbarui");
     if (input.dischargePlantId !== undefined || input.dischargeJettyId !== undefined) {
       throw new AppError(400, "Gunakan endpoint destination-assignment untuk memilih atau mengubah discharge Plant dan Jetty");
@@ -268,7 +283,7 @@ export async function updateShipment(id: string, input: UpdateShipmentInput, act
     if (loadingBa?.status === "FINALIZED") {
       throw new AppError(400, "Shipment/voyage telah dikunci setelah BA LOADING difinalisasi");
     }
-    if (input.loadingMasterId && input.loadingMasterId !== old.loadingMasterId && !canManage(actor)) {
+    if (input.loadingMasterId && input.loadingMasterId !== old.loadingMasterId && !canManage(actor) && actor.role !== "UNLOADING_MASTER") {
       throw new AppError(403, "Hanya Supervisor atau Admin yang dapat mengganti assignment Loading Master");
     }
 
@@ -291,7 +306,7 @@ export async function updateShipment(id: string, input: UpdateShipmentInput, act
       throw new AppError(400, "Laporan historis belum memiliki seluruh field inti shipment");
     }
     await Promise.all([
-      validateCoreShipmentReferences(references as Required<typeof references>, tx),
+      validateCoreShipmentReferences(references as { vesselId: string; activityId: string; productIds: string[]; loadingPlantId: string; loadingJettyId: string }, tx),
       ...(input.loadingMasterId ? [validateLoadingMaster(input.loadingMasterId)] : []),
       validateUnloadingMaster(input.unloadingMasterId, tx),
     ]);
@@ -524,7 +539,7 @@ export async function deleteShipment(id: string, actor: Actor) {
       include: { baDocuments: { select: { id: true, phase: true, status: true } } },
     });
     if (!old) throw new AppError(404, "Shipment/voyage tidak ditemukan");
-    assertLoadingOwner(old.createdById, actor, old.loadingMasterId);
+    assertShipmentModifiable(old, actor);
     if (old.status !== "DRAFT") throw new AppError(400, "Hanya shipment/voyage DRAFT yang dapat dihapus");
     if (old.baDocuments.length > 0) throw new AppError(409, "Shipment/voyage yang sudah memulai proses BA tidak dapat dihapus");
     const deleted = await tx.sealingReport.delete({ where: { id } });
@@ -576,7 +591,7 @@ type FormConfigurationSnapshot = {
 type SnapshotTransactionClient = Pick<
   typeof prisma,
   "sealingRecord" | "seal" | "sealVerification" | "auditLog" | "sealingReport" | "vesselFormProfile" |
-  "compartment" | "vesselSealingPoint" | "plantJettyAssignment" | "beritaAcaraDocument" | "$queryRawUnsafe"
+  "compartment" | "vesselSealingPoint" | "plantJettyAssignment" | "plant" | "jetty" | "beritaAcaraDocument" | "$queryRawUnsafe"
 >;
 
 async function assertLoadingBaOpen(tx: SnapshotTransactionClient, reportId: string) {
@@ -1299,14 +1314,23 @@ async function evaluateLifecycleReport(tx: SnapshotTransactionClient, report: Li
     if (report.loadingPlantId && report.loadingJettyId && !(await tx.plantJettyAssignment.findUnique({ where: { plantId_jettyId: { plantId: report.loadingPlantId, jettyId: report.loadingJettyId } }, select: { id: true } }))) {
       commonDepartureErrors.push({ code: "LOADING_JETTY_MISMATCH", message: "Loading Jetty tidak terdaftar pada Loading Plant" });
     }
-    if (!report.dischargePlantId || !report.dischargeJettyId) {
-      commonDepartureErrors.push({ code: "DESTINATION_ASSIGNMENT_REQUIRED", message: "Discharge Plant dan Jetty wajib dipilih sebelum kapal berangkat" });
-    } else {
+    if (report.dischargePlantId && report.dischargeJettyId) {
       if (!report.dischargePlant?.isActive || !report.dischargeJetty?.isActive) {
         commonDepartureErrors.push({ code: "DISCHARGE_LOCATION_INACTIVE", message: "Discharge Plant dan Jetty harus aktif" });
       }
       if (!(await tx.plantJettyAssignment.findUnique({ where: { plantId_jettyId: { plantId: report.dischargePlantId, jettyId: report.dischargeJettyId } }, select: { id: true } }))) {
         commonDepartureErrors.push({ code: "DISCHARGE_JETTY_MISMATCH", message: "Discharge Jetty tidak terdaftar pada Discharge Plant" });
+      }
+    }
+
+    if (!report.dischargePlantId || !report.dischargeJettyId) {
+      finalizationErrors.push({ code: "DESTINATION_REQUIRED", message: "Discharge Plant dan Jetty wajib ditetapkan sebelum shipment selesai" });
+    } else {
+      if (!report.dischargePlant?.isActive || !report.dischargeJetty?.isActive) {
+        finalizationErrors.push({ code: "DISCHARGE_LOCATION_INACTIVE", message: "Discharge Plant dan Jetty harus aktif" });
+      }
+      if (!(await tx.plantJettyAssignment.findUnique({ where: { plantId_jettyId: { plantId: report.dischargePlantId, jettyId: report.dischargeJettyId } }, select: { id: true } }))) {
+        finalizationErrors.push({ code: "DISCHARGE_JETTY_MISMATCH", message: "Discharge Jetty tidak terdaftar pada Discharge Plant" });
       }
     }
 
@@ -1466,13 +1490,43 @@ const transitions: Record<"depart" | "arrive" | "finish", {
   finish: { from: "SANDAR", to: "FINISH", action: "FINALIZE", timestamp: "finishedAt", processStatus: "FINALIZED" },
 };
 
+export type JourneyTransitionOptions = {
+  occurredAt?: Date | undefined;
+  remarks?: string | null | undefined;
+  dischargePlantId?: string | undefined;
+  dischargeJettyId?: string | undefined;
+};
+
+
 export async function transitionReport(
   id: string,
   transition: keyof typeof transitions,
-  occurredAt: Date | undefined,
-  remarks: string | null | undefined,
-  actor: Actor,
+  optionsOrOccurredAt: JourneyTransitionOptions | Date | undefined,
+  remarksOrActor?: string | null | Actor,
+  maybeActor?: Actor,
 ) {
+  let occurredAt: Date | undefined;
+  let remarks: string | null | undefined;
+  let dischargePlantId: string | undefined;
+  let dischargeJettyId: string | undefined;
+  let actor: Actor;
+
+  if (optionsOrOccurredAt instanceof Date || optionsOrOccurredAt === undefined) {
+    occurredAt = optionsOrOccurredAt;
+    if (maybeActor) {
+      remarks = remarksOrActor as string | null | undefined;
+      actor = maybeActor;
+    } else {
+      actor = remarksOrActor as Actor;
+    }
+  } else {
+    occurredAt = optionsOrOccurredAt.occurredAt;
+    remarks = optionsOrOccurredAt.remarks;
+    dischargePlantId = optionsOrOccurredAt.dischargePlantId;
+    dischargeJettyId = optionsOrOccurredAt.dischargeJettyId;
+    actor = (remarksOrActor as Actor) ?? maybeActor!;
+  }
+
   return prisma.$transaction(async (rawTransaction) => {
     const tx = rawTransaction as unknown as SnapshotTransactionClient;
     await tx.$queryRawUnsafe('SELECT "id" FROM "sealing_report" WHERE "id" = $1 FOR UPDATE', id);
@@ -1483,6 +1537,10 @@ export async function transitionReport(
 
     if (transition === "depart") assertLoadingOwner(report.createdById, actor, report.loadingMasterId);
     if (transition === "arrive" || transition === "finish") assertUnloadingAssignment(report.unloadingMasterId, actor);
+
+    if (transition === "arrive" && dischargePlantId && dischargeJettyId) {
+      await validateDestinationReferences({ dischargePlantId, dischargeJettyId }, tx);
+    }
 
     const validation = await evaluateLifecycleReport(tx, report);
     const transitionValidation = validation.transitions[transition === "finish" ? "finalize" : transition];
@@ -1569,10 +1627,36 @@ export async function transitionReport(
       status: rule.to,
       sealingProcessStatus: rule.processStatus,
       [rule.timestamp]: transitionAt,
-      ...(transition === "finish" ? { finalizedById: actor.id, finalSnapshot } : {}),
+      ...(transition === "arrive" && dischargePlantId && dischargeJettyId ? {
+        dischargePlantId,
+        dischargeJettyId,
+      } : {}),
+      ...(transition === "finish" && finalSnapshot !== undefined ? { finalizedById: actor.id, finalSnapshot } : transition === "finish" ? { finalizedById: actor.id } : {}),
       ...(remarks === undefined ? {} : { remarks }),
     };
     const updated = await tx.sealingReport.update({ where: { id }, data, include: reportInclude });
+    if (transition === "arrive" && dischargePlantId && dischargeJettyId) {
+      await tx.auditLog.create({
+        data: {
+          userId: actor.id,
+          action: "UPDATE",
+          entityType: "SHIPMENT_DESTINATION_ASSIGNMENT",
+          entityId: id,
+          oldData: asJson({
+            dischargePlantId: report.dischargePlantId,
+            dischargeJettyId: report.dischargeJettyId,
+            unloadingMasterId: report.unloadingMasterId,
+          }),
+          newData: asJson({
+            dischargePlantId,
+            dischargeJettyId,
+            unloadingMasterId: report.unloadingMasterId,
+            assignedById: actor.id,
+            assignedAt: transitionAt.toISOString(),
+          }),
+        },
+      });
+    }
     await tx.auditLog.create({
       data: {
         userId: actor.id,
@@ -1599,7 +1683,8 @@ function assertFormReadable(
   }
   if (
     actor.role === "UNLOADING_MASTER" &&
-    report.unloadingMasterId !== actor.id
+    report.unloadingMasterId !== actor.id &&
+    report.createdById !== actor.id
   ) {
     throw new AppError(403, "Anda tidak berhak menerima perjalanan ini");
   }

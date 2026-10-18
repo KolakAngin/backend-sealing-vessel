@@ -4,7 +4,9 @@ import type { AddressInfo } from "node:net";
 import { test } from "node:test";
 import { unlink } from "node:fs/promises";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import sharp from "sharp";
+
 import { getDocument } from "pdfjs-dist/legacy/build/pdf.mjs";
 
 import { app } from "../src/app.js";
@@ -41,7 +43,8 @@ const json = (method: string, body: object): RequestInit => ({
   headers: { "content-type": "application/json" },
   body: JSON.stringify(body),
 });
-const standardFontDataUrl = `${path.resolve(process.cwd(), "node_modules/pdfjs-dist/standard_fonts")}${path.sep}`;
+const standardFontDataUrl = `${pathToFileURL(path.resolve(process.cwd(), "node_modules/pdfjs-dist/standard_fonts")).href}/`;
+
 const pdfText = async (bytes: Buffer) => {
   const parsed = await getDocument({ data: new Uint8Array(bytes), useSystemFonts: false, standardFontDataUrl }).promise;
   const pages: string[] = [];

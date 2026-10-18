@@ -315,7 +315,9 @@ function renderSummary(page: PDFPage, font: PDFFont, bold: PDFFont, snapshot: Un
     ["Vessel / IMO", `${report.vessel.name} / ${report.vessel.imoNumber ?? "-"}`],
     ["Product", productNames],
     ["Loading", `${report.loadingPlant?.name ?? "-"} / ${report.loadingJetty?.name ?? "-"}`],
-    ["Destination", `${report.dischargePlant?.name ?? "-"} / ${report.dischargeJetty?.name ?? "-"}`],
+    ["Destination", (report.dischargePlant || report.dischargeJetty)
+      ? `${report.dischargePlant?.name ?? "-"} / ${report.dischargeJetty?.name ?? "-"}`
+      : "belum ditetapkan"],
     ["Tanggal laporan", formatDate(report.reportDateTime)],
   ];
   fields.forEach(([label, value], index) => {

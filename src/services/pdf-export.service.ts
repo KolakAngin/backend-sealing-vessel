@@ -324,7 +324,9 @@ function documentMasterContext(snapshot: PdfFinalSnapshot) {
   const name = (isUnloading ? report.unloadingMaster?.fullName : report.loadingMaster?.fullName) ?? "-";
   const identity = name.toLocaleLowerCase().startsWith(role.toLocaleLowerCase()) ? name : `${role} ${name}`;
   const port = isUnloading
-    ? `${report.dischargePlant?.name ?? "-"} / ${report.dischargeJetty?.name ?? "-"}`
+    ? ((report.dischargePlant || report.dischargeJetty)
+        ? `${report.dischargePlant?.name ?? "-"} / ${report.dischargeJetty?.name ?? "-"}`
+        : "belum ditetapkan")
     : `${report.loadingPlant?.name ?? "-"} / ${report.loadingJetty?.name ?? "-"}`;
   return { identity, isUnloading, port };
 }
@@ -364,7 +366,9 @@ function renderNativeHeader(page: PDFPage, font: PDFFont, bold: PDFFont, snapsho
     [" Activity: ", report.activity?.code ?? "-"],
     [" Status: ", report.sealingStatus ?? "-"],
     [" Loading: ", `${report.loadingPlant?.name ?? "-"} / ${report.loadingJetty?.name ?? "-"}`],
-    [" Discharge: ", `${report.dischargePlant?.name ?? "-"} / ${report.dischargeJetty?.name ?? "-"}`],
+    [" Discharge: ", (report.dischargePlant || report.dischargeJetty)
+      ? `${report.dischargePlant?.name ?? "-"} / ${report.dischargeJetty?.name ?? "-"}`
+      : "belum ditetapkan"],
     [" Report: ", report.reportNo],
   ];
   drawRichWrappedText(page, info.flatMap(([label, value]) => [{ text: label, font }, { text: value, font: bold }]), 405, metadataTop - 5, 149, 6.1, 7.7);

@@ -500,6 +500,18 @@ export async function finalizeBaDocument(reportId: string, phase: BeritaAcaraPha
     const sourceRecords = source.sealingRecords as FinalizationRecord[];
 
     if (phase === "UNLOADING") {
+      if (!source.dischargePlantId || !source.dischargeJettyId || !source.dischargePlant || !source.dischargeJetty) {
+        throw new AppError(400, "Discharge Plant dan Jetty wajib ditetapkan sebelum BA UNLOADING difinalisasi");
+      }
+      if (!source.dischargePlant.isActive || !source.dischargeJetty.isActive) {
+        throw new AppError(400, "Discharge Plant dan Jetty harus aktif saat BA UNLOADING difinalisasi");
+      }
+      const destinationPair = await tx.plantJettyAssignment.findUnique({
+        where: { plantId_jettyId: { plantId: source.dischargePlantId, jettyId: source.dischargeJettyId } },
+        select: { id: true },
+      });
+      if (!destinationPair) throw new AppError(400, "Discharge Jetty tidak terdaftar pada Discharge Plant");
+
       const loadingDocument = await tx.beritaAcaraDocument.findUnique({
         where: { sealingReportId_phase: { sealingReportId: reportId, phase: "LOADING" } },
         select: { id: true, status: true, snapshot: true, snapshotVersion: true, finalizedAt: true },
@@ -638,7 +650,19 @@ export async function finalizeBaDocument(reportId: string, phase: BeritaAcaraPha
           finalizedAt: loadingDocument.finalizedAt.toISOString(),
           snapshotChecksumSha256: loadingSnapshotChecksumSha256,
         },
-        report: loadingSnapshot.report,
+        report: {
+          ...loadingSnapshot.report,
+          dischargePlant: source.dischargePlant,
+          dischargeJetty: source.dischargeJetty,
+          destinationAssignment: {
+            dischargePlantId: source.dischargePlantId,
+            dischargeJettyId: source.dischargeJettyId,
+            unloadingMasterId: source.unloadingMasterId,
+          },
+          unloadingMaster: source.unloadingMaster,
+          arrivedAt: source.arrivedAt,
+          finishedAt: source.finishedAt,
+        },
         formConfigurationSnapshot: loadingSnapshot.formConfigurationSnapshot,
         records: unloadingRecords,
         attachments: uniqueLoadingAttachments,
@@ -693,17 +717,16 @@ export async function finalizeBaDocument(reportId: string, phase: BeritaAcaraPha
       if (source.sealingProcessStatus !== "READY") {
         throw new AppError(400, "BA LOADING hanya dapat difinalisasi setelah penyegelan loading lengkap (READY)");
       }
-      if (!source.dischargePlantId || !source.dischargeJettyId || !source.dischargePlant || !source.dischargeJetty) {
-        throw new AppError(400, "Discharge Plant dan Jetty wajib ditetapkan sebelum BA LOADING difinalisasi");
+      if (source.dischargePlantId && source.dischargeJettyId) {
+        if (!source.dischargePlant?.isActive || !source.dischargeJetty?.isActive) {
+          throw new AppError(400, "Discharge Plant dan Jetty harus aktif saat BA LOADING difinalisasi");
+        }
+        const destinationPair = await tx.plantJettyAssignment.findUnique({
+          where: { plantId_jettyId: { plantId: source.dischargePlantId, jettyId: source.dischargeJettyId } },
+          select: { id: true },
+        });
+        if (!destinationPair) throw new AppError(400, "Discharge Jetty tidak terdaftar pada Discharge Plant");
       }
-      if (!source.dischargePlant.isActive || !source.dischargeJetty.isActive) {
-        throw new AppError(400, "Discharge Plant dan Jetty harus aktif saat BA LOADING difinalisasi");
-      }
-      const destinationPair = await tx.plantJettyAssignment.findUnique({
-        where: { plantId_jettyId: { plantId: source.dischargePlantId, jettyId: source.dischargeJettyId } },
-        select: { id: true },
-      });
-      if (!destinationPair) throw new AppError(400, "Discharge Jetty tidak terdaftar pada Discharge Plant");
 
       const configuration = source.formConfigurationSnapshot;
       if (!configuration || typeof configuration !== "object" || Array.isArray(configuration)) {
